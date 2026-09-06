@@ -319,13 +319,13 @@ function buildPaceLabels(valid, numChukkas, totalRequested) {
 }
 // Fill chukkas like pouring water: Chukka 1 fills completely before Chukka 2,
 // and so on. Whoever has the most chukkas left always gets first claim on a
-// spot, so only the tail can end up short. Early preference is a hard rule:
-// their chukkas must fall in the first two-thirds of the day; late preference
-// must fall in the last two-thirds. That's only ever broken as a last resort,
-// if there's genuinely no one else left to fill a slot — each time that
-// happens it's recorded as a violation and surfaced as a warning. Fast/slow
-// requests are matched against each chukka's pace label where possible; slow
-// chukkas get a soft nudge toward lower-handicap players, fast chukkas toward
+// spot, so only the tail can end up short. Early/late preference is a strong
+// but soft nudge — early leans toward the first two-thirds of the day, late
+// toward the last two-thirds — but it always yields if honouring it would
+// force a roster no split could keep under the handicap-gap cap (e.g. every
+// -2 handicap player asking for late at once). Fast/slow requests are
+// matched against each chukka's pace label where possible; slow chukkas get
+// a soft nudge toward lower-handicap players, fast chukkas toward
 // higher-handicap ones.
 function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter) {
     const chukkas = Array.from({ length: numChukkas }, (_, i) => ({ index: i, pace: paceLabels[i], players: [] }));
@@ -339,67 +339,587 @@ function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter) {
         need[p.id] = { slow, none };
         actualPace[p.id] = { slow: 0 };
     });
-    const firstTwoThirds = Math.ceil((numChukkas * 2) / 3); // early must land before this index
-    const lastTwoThirdsStart = Math.floor(numChukkas / 3); // late must land at or after this index
-    const violations = [];
-    const isAllowed = (p, c) => {
-        if (p.timingPref === 'early')
-            return c.index < firstTwoThirds;
-        if (p.timingPref === 'late')
-            return c.index >= lastTwoThirdsStart;
-        return true;
-    };
+    const firstTwoThirds = Math.ceil((numChukkas * 2) / 3); // early leans toward before this index
+    const lastTwoThirdsStart = Math.floor(numChukkas / 3); // late leans toward at or after this index
     chukkas.forEach((c) => {
         const chosenIds = new Set();
         for (let slot = 0; slot < capacity; slot++) {
-            const pickBest = (respectWindow) => {
-                let bp = null;
-                let bs = -Infinity;
-                valid.forEach((p) => {
-                    if (chosenIds.has(p.id))
-                        return;
-                    const n = need[p.id];
-                    const deficit = n.slow + n.none;
-                    if (deficit <= 0)
-                        return;
-                    if (respectWindow && !isAllowed(p, c))
-                        return;
-                    let score = deficit * 1000;
-                    if (p.timingPref === 'early') {
-                        const remainingWindow = firstTwoThirds - c.index;
-                        const urgency = remainingWindow > 0 ? deficit / remainingWindow : 0;
-                        score += urgency * 8000;
-                        score += (firstTwoThirds - c.index) * 10;
-                        if (remainingWindow - deficit <= 0)
-                            score += 500000; // out of slack: must take this slot or miss their window
+            let bestP = null;
+            let bestScore = -Infinity;
+            valid.forEach((p) => {
+                if (chosenIds.has(p.id))
+                    return;
+                const n = need[p.id];
+                const deficit = n.slow + n.none;
+                if (deficit <= 0)
+                    return;
+                let score = deficit * 1000;
+                if (p.timingPref === 'early') {
+                    const remainingWindow = firstTwoThirds - c.index;
+                    const inWindow = c.index < firstTwoThirds;
+                    const urgency = remainingWindow > 0 ? deficit / remainingWindow : 0;
+                    score += (inWindow ? urgency * 8000 : -2500) + (firstTwoThirds - c.index) * 10;
+                }
+                else if (p.timingPref === 'late') {
+                    const remainingWindow = numChukkas - c.index;
+                    const inWindow = c.index >= lastTwoThirdsStart;
+                    const urgency = remainingWindow > 0 ? deficit / remainingWindow : 0;
+                    score += (inWindow ? urgency * 8000 : -2500) + (c.index - lastTwoThirdsStart + 1) * 10;
+                }
+                if (c.pace === 'slow')
+                    score += n.slow > 0 ? 50 : 20;
+                const h = Number(p.handicap) || 0;
+                if (c.pace === 'slow') {
+                    const effH = Math.max(h, -3); // don't keep rewarding ever-lower handicaps without limit
+                    score += (2 - effH) * 3;
+                    const lowCount = c.players.filter((cp) => (Number(cp.handicap) || 0) <= -3).length;
+                    if (lowCount >= 3 && h >= 0)
+                        score += 150; // nudge in a higher-goal helper once it's gotten very low
+                    if (h <= -2) {
+                        const beginnerCount = c.players.filter((cp) => (Number(cp.handicap) || 0) <= -2).length;
+                        score += beginnerCount * 60; // pull -2 beginners into the same chukkas together — but no one else
                     }
-                    else if (p.timingPref === 'late') {
-                        const remainingWindow = numChukkas - c.index;
-                        const urgency = remainingWindow > 0 ? deficit / remainingWindow : 0;
-                        score += urgency * 8000;
-                        score += (c.index - lastTwoThirdsStart + 1) * 10;
-                        if (remainingWindow - deficit <= 0)
-                            score += 500000;
+                    const beginnersInChukka = c.players.filter((cp) => (Number(cp.handicap) || 0) <= -2).length;
+                    const highInChukka = c.players.filter((cp) => (Number(cp.handicap) || 0) > 0).length;
+                    if (h > 0 && beginnersInChukka >= 1 && highInChukka >= 1) {
+                        score -= 100000; // any chukka with a beginner in it caps out at one high-goal player, full stop
                     }
-                    if (c.pace === 'slow')
-                        score += n.slow > 0 ? 50 : 20;
-                    const h = Number(p.handicap) || 0;
-                    if (c.pace === 'slow') {
-                        const effH = Math.max(h, -3); // don't keep rewarding ever-lower handicaps without limit
-                        score += (2 - effH) * 3;
-                        const lowCount = c.players.filter((cp) => (Number(cp.handicap) || 0) <= -3).length;
-                        if (lowCount >= 3 && h >= 0)
-                            score += 150; // nudge in a higher-goal helper once it's gotten very low
-                        if (h <= -2) {
-                            const beginnerCount = c.players.filter((cp) => (Number(cp.handicap) || 0) <= -2).length;
-                            score += beginnerCount * 60; // pull -2 beginners into the same chukkas together — but no one else
-                        }
-                        const beginnersInChukka = c.players.filter((cp) => (Number(cp.handicap) || 0) <= -2).length;
-                        const highInChukka = c.players.filter((cp) => (Number(cp.handicap) || 0) > 0).length;
-                        if (h > 0 && beginnersInChukka >= 1 && highInChukka >= 1) {
-                            score -= 100000; // any chukka with a beginner in it caps out at one high-goal player, full stop
-                        }
-                    }
-                    else if (c.pace === 'neutral' && n.slow > 0 && c.players.length > 0) {
-                        // Someone who specifically asked for a slow chukka shouldn't end
- 
+                }
+                else if (c.pace === 'neutral' && n.slow > 0 && c.players.length > 0) {
+                    // Someone who specifically asked for a slow chukka shouldn't end
+                    // up in a neutral chukka that's shaping up to be a fast one —
+                    // steer them toward chukkas that are staying lower-handicap.
+                    const avgSoFar = c.players.reduce((s, cp) => s + (Number(cp.handicap) || 0), 0) / c.players.length;
+                    if (avgSoFar > 0.5)
+                        score -= (avgSoFar - 0.5) * 15;
+                }
+                score += jitter ? Math.random() * 0.5 : 0;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestP = p;
+                }
+            });
+            if (!bestP)
+                break;
+            chosenIds.add(bestP.id);
+            c.players.push(bestP);
+            const n = need[bestP.id];
+            if (c.pace === 'slow' && n.slow > 0) {
+                n.slow--;
+                actualPace[bestP.id].slow++;
+            }
+            else if (n.none > 0) {
+                n.none--;
+            }
+            else {
+                n.slow--;
+            }
+        }
+    });
+    const assigned = {};
+    valid.forEach((p) => {
+        const n = need[p.id];
+        assigned[p.id] = (Number(p.chukkasWanted) || 0) - (n.slow + n.none);
+    });
+    const violations = [];
+    valid.forEach((p) => {
+        if (p.timingPref === 'none')
+            return;
+        chukkas.forEach((c) => {
+            if (!c.players.some((pp) => pp.id === p.id))
+                return;
+            const outOfWindow = p.timingPref === 'early' ? c.index >= firstTwoThirds : c.index < lastTwoThirdsStart;
+            if (outOfWindow)
+                violations.push({ name: p.name, chukka: c.index + 1, pref: p.timingPref });
+        });
+    });
+    return { chukkas, assigned, actualPace, violations };
+}
+// Within each chukka, try every possible way to split the roster into two
+// sides and keep whichever split has the smallest handicap gap, while
+// strongly preferring to keep each player in the same shirt colour all day —
+// only trading that away when it's the only way to protect the beginner
+// rules, and treating pure handicap balance as a lower priority than colour
+// continuity once those rules are satisfied.
+function assignColours(chukkas, valid) {
+    const history = {};
+    valid.forEach((p) => {
+        history[p.id] = { colour: null, streak: 0, changes: 0 };
+    });
+    let totalDiff = 0;
+    chukkas.forEach((c) => {
+        const roster = c.players;
+        const total = roster.length;
+        const targetBlue = Math.ceil(total / 2);
+        const idxArr = roster.map((_, i) => i);
+        const combos = combinations(idxArr, targetBlue);
+        // Pair up similarly-ranked players (by handicap) so a good split doesn't
+        // just balance the sum — it also avoids stacking, say, the two strongest
+        // and two weakest on one side against four mediums on the other.
+        const sortedByH = [...roster].sort((a, b) => (Number(b.handicap) || 0) - (Number(a.handicap) || 0));
+        const pairOf = {};
+        sortedByH.forEach((p, i) => {
+            pairOf[p.id] = Math.floor(i / 2);
+        });
+        let best = null;
+        combos.forEach((comboIdx) => {
+            const blueSet = new Set(comboIdx);
+            let sumBlue = 0;
+            let sumWhite = 0;
+            let changeCost = 0;
+            let changeCapPenalty = 0;
+            let pairPenalty = 0;
+            let blueBeginners = 0;
+            let blueHigh = 0;
+            let whiteBeginners = 0;
+            let whiteHigh = 0;
+            const pairSeen = {};
+            roster.forEach((p, i) => {
+                const inBlue = blueSet.has(i);
+                const h = Number(p.handicap) || 0;
+                if (inBlue)
+                    sumBlue += h;
+                else
+                    sumWhite += h;
+                if (h <= -2) {
+                    if (inBlue)
+                        blueBeginners++;
+                    else
+                        whiteBeginners++;
+                }
+                if (h > 0) {
+                    if (inBlue)
+                        blueHigh++;
+                    else
+                        whiteHigh++;
+                }
+                const prev = history[p.id].colour;
+                if (prev) {
+                    if (inBlue && prev !== 'blue')
+                        changeCost++;
+                    if (!inBlue && prev !== 'white')
+                        changeCost++;
+                }
+                const willChange = prev && ((inBlue && prev !== 'blue') || (!inBlue && prev !== 'white'));
+                const prospectiveChanges = history[p.id].changes + (willChange ? 1 : 0);
+                changeCapPenalty += Math.max(0, prospectiveChanges - 3);
+                const pid = pairOf[p.id];
+                if (pairSeen[pid] === undefined)
+                    pairSeen[pid] = inBlue;
+                else if (pairSeen[pid] === inBlue)
+                    pairPenalty++;
+            });
+            const diff = Math.abs(sumBlue - sumWhite);
+            // Priority order, highest first: keep the handicap gap at 2 or under
+            // for chukkas with no beginners, or 3 or under for chukkas that do
+            // have a beginner. This is now checked FIRST, above every beginner
+            // rule below — because putting all the beginners on one side always
+            // trivially satisfies "don't overload a beginner's side" and "don't
+            // stack helpers", which let a split with an enormous gap look
+            // "compliant" purely by exempting the other side from any beginner
+            // rule at all. Only among splits that already keep the gap in check
+            // do the finer beginner protections get to break ties: never exceed a
+            // 2.5 total on a beginner's side; a beginner's side can't drop below
+            // -6; at most one high-goal (over 0) helper on a beginner's side; try
+            // not to push anyone past 3 shirt changes for the day (a soft
+            // preference — an uneven team is worse than an extra shirt change);
+            // prefer keeping colours the same generally; minimise the handicap
+            // gap further; avoid stacking strong/weak pairs together. Each entry
+            // is compared in turn — only moving to the next one if the current
+            // one is tied.
+            const hasBeginner = blueBeginners > 0 || whiteBeginners > 0;
+            const hardCapPenalty = (blueBeginners > 0 && sumBlue > 2.5 ? sumBlue - 2.5 : 0) + (whiteBeginners > 0 && sumWhite > 2.5 ? sumWhite - 2.5 : 0);
+            const beginnerPenalty = (blueBeginners > 0 ? Math.max(0, blueHigh - 1) : 0) + (whiteBeginners > 0 ? Math.max(0, whiteHigh - 1) : 0);
+            const weakTeamPenalty = (blueBeginners > 0 && sumBlue < -6 ? -6 - sumBlue : 0) + (whiteBeginners > 0 && sumWhite < -6 ? -6 - sumWhite : 0);
+            const diffCapPenalty = Math.max(0, diff - (hasBeginner ? 3 : 2));
+            const key = [diffCapPenalty, hardCapPenalty, weakTeamPenalty, beginnerPenalty, changeCapPenalty, changeCost, diff, pairPenalty];
+            const better = !best || compareKeys(key, best.key) < 0;
+            if (better) {
+                best = { key, diff, hardCapPenalty, beginnerPenalty, weakTeamPenalty, changeCapPenalty, diffCapPenalty, pairPenalty, changeCost, blueSet };
+            }
+        });
+        if (!best) {
+            c.blue = [];
+            c.white = [];
+            return;
+        }
+        totalDiff += best.diff;
+        const blueList = roster.filter((p, i) => best.blueSet.has(i));
+        const whiteList = roster.filter((p, i) => !best.blueSet.has(i));
+        blueList.forEach((p) => {
+            const h = history[p.id];
+            const prev = h.colour;
+            h.changes += prev && prev !== 'blue' ? 1 : 0;
+            h.streak = prev === 'blue' ? h.streak + 1 : 1;
+            h.colour = 'blue';
+        });
+        whiteList.forEach((p) => {
+            const h = history[p.id];
+            const prev = h.colour;
+            h.changes += prev && prev !== 'white' ? 1 : 0;
+            h.streak = prev === 'white' ? h.streak + 1 : 1;
+            h.colour = 'white';
+        });
+        c.blue = blueList;
+        c.white = whiteList;
+        const blueSum = blueList.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+        const whiteSum = whiteList.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+        const avgTeamHandicap = (blueSum + whiteSum) / 2;
+        c.displayPace = avgTeamHandicap > 2 ? 'fast' : avgTeamHandicap < 0 ? 'slow' : 'neutral';
+    });
+    const totalChanges = Object.values(history).reduce((s, h) => s + h.changes, 0);
+    return { history, totalDiff, totalChanges };
+}
+function ChukkaBoardApp() {
+    const [players, setPlayers] = useState(() => loadStoredPlayers() || SAMPLE);
+    const teamSize = 4; // always 4 a side — 8 players per chukka
+    const [board, setBoard] = useState(null);
+    const [warnings, setWarnings] = useState([]);
+    const [openDropdownId, setOpenDropdownId] = useState(null);
+    const [shareStatus, setShareStatus] = useState('');
+    useEffect(() => {
+        saveStoredPlayers(players);
+    }, [players]);
+    const selectSuggestion = (p, match) => {
+        setPlayers((ps) => ps.map((pp) => (pp.id === p.id ? { ...pp, name: match.name, handicap: match.handicap } : pp)));
+        setOpenDropdownId(null);
+    };
+    const updatePlayer = (id, field, value) => setPlayers((ps) => ps.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+    const addPlayer = () => setPlayers((ps) => [...ps, makePlayer('', 0, 3)]);
+    const removePlayer = (id) => setPlayers((ps) => ps.filter((p) => p.id !== id));
+    const clearAll = () => {
+        setPlayers([]);
+        setBoard(null);
+        setWarnings([]);
+    };
+    const loadSample = () => {
+        setPlayers(SAMPLE.map((p) => ({ ...p })));
+        setBoard(null);
+        setWarnings([]);
+    };
+    const setChukkasWanted = (p, raw) => {
+        const next = Math.max(0, Math.floor(Number(raw) || 0));
+        let slow = Number(p.slowChukkas) || 0;
+        if (slow > next)
+            slow = next;
+        setPlayers((ps) => ps.map((pp) => (pp.id === p.id ? { ...pp, chukkasWanted: next, slowChukkas: slow } : pp)));
+    };
+    const adjustSlow = (p, delta) => {
+        const cur = Number(p.slowChukkas) || 0;
+        const wanted = Number(p.chukkasWanted) || 0;
+        const next = cur + delta;
+        if (next < 0 || next > wanted)
+            return;
+        updatePlayer(p.id, 'slowChukkas', next);
+    };
+    const capacityPerChukka = teamSize * 2;
+    const validNow = players.filter((p) => p.name.trim() !== '');
+    const totalRequestedNow = validNow.reduce((s, p) => s + (Number(p.chukkasWanted) || 0), 0);
+    const computedChukkas = totalRequestedNow > 0 ? Math.ceil(totalRequestedNow / capacityPerChukka) : 0;
+    function generate() {
+        const warn = [];
+        const valid = players.filter((p) => p.name.trim() !== '');
+        if (valid.length < 2) {
+            setWarnings(['Add at least two named players before generating a board.']);
+            setBoard(null);
+            return;
+        }
+        const totalRequested = valid.reduce((s, p) => s + (Number(p.chukkasWanted) || 0), 0);
+        if (totalRequested === 0) {
+            setWarnings(['Give at least one player a chukka to play — the number of chukkas is worked out from these requests.']);
+            setBoard(null);
+            return;
+        }
+        const numChukkas = Math.ceil(totalRequested / capacityPerChukka);
+        const paceLabels = buildPaceLabels(valid, numChukkas, totalRequested);
+        // Try several randomised passes and keep whichever fills the most
+        // requested chukkas, balances handicaps best, matches slow-chukka
+        // requests best, and changes the fewest shirts, in that order.
+        const ATTEMPTS = 15;
+        let best = null;
+        for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+            const { chukkas, assigned, actualPace, violations } = fillChukkas(valid, numChukkas, capacityPerChukka, paceLabels, attempt > 0);
+            const { history, totalDiff, totalChanges } = assignColours(chukkas, valid);
+            const unmet = valid.reduce((s, p) => s + Math.max(0, (Number(p.chukkasWanted) || 0) - assigned[p.id]), 0);
+            const paceMismatch = valid.reduce((s, p) => {
+                const slowRequested = Number(p.slowChukkas) || 0;
+                if (slowRequested === 0)
+                    return s;
+                const nonFastCount = chukkas.filter((c) => c.players.some((pp) => pp.id === p.id) && c.displayPace !== 'fast').length;
+                return s + Math.max(0, slowRequested - nonFastCount);
+            }, 0);
+            const capBreaches = Object.values(history).reduce((s, h) => s + Math.max(0, h.changes - 3), 0);
+            const gapBreaches = chukkas.reduce((s, c) => {
+                const hasBeginner = c.players.some((p) => (Number(p.handicap) || 0) <= -2);
+                const blueTotal = c.blue.reduce((sb, p) => sb + (Number(p.handicap) || 0), 0);
+                const whiteTotal = c.white.reduce((sw, p) => sw + (Number(p.handicap) || 0), 0);
+                return s + Math.max(0, Math.abs(blueTotal - whiteTotal) - (hasBeginner ? 3 : 2));
+            }, 0);
+            const score = unmet * 100000 +
+                gapBreaches * 3000 +
+                violations.length * 1500 +
+                capBreaches * 1000 +
+                paceMismatch * 200 +
+                totalChanges * 50 +
+                totalDiff * 10;
+            if (!best || score < best.score) {
+                best = { chukkas, assigned, history, unmet, totalDiff, totalChanges, actualPace, violations, score };
+            }
+        }
+        valid.forEach((p) => {
+            const requested = Number(p.chukkasWanted) || 0;
+            if (requested > numChukkas) {
+                warn.push(`${p.name} asked for ${requested} chukkas but the day only has ${numChukkas} — they'll play in all ${numChukkas}.`);
+            }
+            const slowRequested = Number(p.slowChukkas) || 0;
+            if (slowRequested > 0) {
+                const fastOnes = best.chukkas
+                    .filter((c) => c.players.some((pp) => pp.id === p.id) && c.displayPace === 'fast')
+                    .map((c) => c.index + 1);
+                const nonFastCount = best.chukkas.filter((c) => c.players.some((pp) => pp.id === p.id) && c.displayPace !== 'fast').length;
+                const short = Math.max(0, slowRequested - nonFastCount);
+                if (short > 0) {
+                    warn.push(`${p.name}: only got ${slowRequested - short} of ${slowRequested} requested slow chukkas without landing in a fast one (fast: Chukka ${fastOnes.join(', ')}).`);
+                }
+            }
+        });
+        best.chukkas.forEach((c) => {
+            if (c.players.length < capacityPerChukka) {
+                warn.push(`Chukka ${c.index + 1} (${c.displayPace}) only has ${c.players.length} of ${capacityPerChukka} spots filled — not enough spare chukka requests left to fill it.`);
+            }
+            const hasBeginner = c.players.some((p) => (Number(p.handicap) || 0) <= -2);
+            const blueTotal = c.blue.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+            const whiteTotal = c.white.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+            const gap = Math.abs(blueTotal - whiteTotal);
+            const gapCap = hasBeginner ? 3 : 2;
+            if (gap > gapCap) {
+                warn.push(`Chukka ${c.index + 1}: handicap gap is ${gap}, couldn't get it under ${gapCap} given who's in that chukka.`);
+            }
+        });
+        best.violations.forEach((v) => {
+            warn.push(`${v.name} played Chukka ${v.chukka} outside their ${v.pref} preference — kept the handicap balance intact instead.`);
+        });
+        Object.entries(best.history).forEach(([id, h]) => {
+            if (h.changes > 3) {
+                const p = valid.find((pp) => pp.id === Number(id));
+                if (p)
+                    warn.push(`${p.name} changed shirts ${h.changes} times — couldn't hold it to 3 given the rest of the day's constraints.`);
+            }
+        });
+        setWarnings(warn);
+        const displayValid = [...valid].sort((a, b) => (Number(b.handicap) || 0) - (Number(a.handicap) || 0));
+        setBoard({ ...best, numChukkas, capacity: capacityPerChukka, teamSize, valid: displayValid });
+    }
+    function buildShareText(b) {
+        const lines = ['Chukka Board', ''];
+        b.chukkas.forEach((c) => {
+            const blueNames = c.blue.map((p) => `${p.name} ${p.handicap}`).join(', ');
+            const whiteNames = c.white.map((p) => `${p.name} ${p.handicap}`).join(', ');
+            lines.push(`Chukka ${c.index + 1} (${c.displayPace})`);
+            lines.push(`  Blue: ${blueNames || '—'}`);
+            lines.push(`  White: ${whiteNames || '—'}`);
+            lines.push('');
+        });
+        return lines.join('\n');
+    }
+    async function shareBoard() {
+        if (!board)
+            return;
+        const text = buildShareText(board);
+        if (navigator.share) {
+            try {
+                await navigator.share({ title: 'Chukka Board', text });
+            }
+            catch (e) {
+                // user cancelled the share sheet — nothing to do
+            }
+            return;
+        }
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            try {
+                await navigator.clipboard.writeText(text);
+                setShareStatus('Copied to clipboard — paste it into your message.');
+                setTimeout(() => setShareStatus(''), 4000);
+                return;
+            }
+            catch (e) {
+                // fall through to the prompt fallback below
+            }
+        }
+        window.prompt('Copy this text to share it:', text);
+    }
+    return (React.createElement("div", { className: "min-h-screen bg-emerald-950 text-stone-100 pb-24" },
+        React.createElement("div", { className: "max-w-5xl mx-auto px-4 pt-10" },
+            React.createElement("header", { className: "mb-8 border-b border-emerald-800 pb-6" },
+                React.createElement("p", { className: "text-xs uppercase tracking-widest text-amber-500 mb-1" }, "Match Day Line-Up"),
+                React.createElement("h1", { className: "text-4xl font-serif tracking-tight text-stone-50" }, "Chukka Board"),
+                React.createElement("p", { className: "text-emerald-300 mt-2 text-sm max-w-2xl" }, "Enter your players, handicaps, and how many chukkas each wants \u2014 plus how many of those should be fast or slow, and any early/late leaning. Everything else is worked out for you, and the best of several attempts is kept.")),
+            React.createElement("section", { className: "flex flex-wrap gap-6 items-end mb-6" },
+                React.createElement("div", { className: "text-sm text-emerald-400 pb-2" },
+                    capacityPerChukka,
+                    " players per chukka (4 a side)"),
+                React.createElement("div", { className: "text-sm text-amber-400 pb-2 font-mono" },
+                    "Chukkas needed: ",
+                    computedChukkas || '—'),
+                React.createElement("div", { className: "flex-1" }),
+                React.createElement("button", { onClick: loadSample, className: "text-xs text-emerald-400 hover:text-emerald-200 underline underline-offset-2" }, "Load sample roster"),
+                React.createElement("button", { onClick: clearAll, className: "text-xs text-emerald-400 hover:text-emerald-200 underline underline-offset-2" }, "Clear all")),
+            React.createElement("section", { className: "mb-6" },
+                React.createElement("div", { className: "bg-emerald-900/60 border border-emerald-800 rounded-lg overflow-hidden" },
+                    React.createElement("div", { className: "grid grid-cols-12 gap-2 px-4 py-2 text-xs uppercase tracking-wide text-emerald-400 border-b border-emerald-800" },
+                        React.createElement("div", { className: "col-span-5" }, "Name"),
+                        React.createElement("div", { className: "col-span-3" }, "Handicap"),
+                        React.createElement("div", { className: "col-span-3" }, "Chukkas wanted"),
+                        React.createElement("div", { className: "col-span-1" })),
+                    players.map((p) => {
+                        return (React.createElement("div", { key: p.id, className: "border-b border-emerald-800/60 last:border-b-0 px-4 py-2" },
+                            React.createElement("div", { className: "grid grid-cols-12 gap-2 items-center" },
+                                React.createElement("div", { className: "col-span-5 relative" },
+                                    React.createElement("input", { className: "w-full bg-transparent border border-emerald-800 rounded px-2 py-1 text-stone-50 placeholder-emerald-600", placeholder: "Player name", value: p.name, onFocus: () => setOpenDropdownId(p.id), onBlur: () => setTimeout(() => setOpenDropdownId((id) => (id === p.id ? null : id)), 150), onChange: (e) => {
+                                            updatePlayer(p.id, 'name', e.target.value);
+                                            setOpenDropdownId(p.id);
+                                        } }),
+                                    openDropdownId === p.id &&
+                                        p.name.trim().length > 0 &&
+                                        (() => {
+                                            const matches = MASTER_HANDICAPS.filter((m) => m.name.toLowerCase().includes(p.name.trim().toLowerCase())).slice(0, 6);
+                                            if (matches.length === 0)
+                                                return null;
+                                            return (React.createElement("div", { className: "absolute z-20 mt-1 w-full bg-emerald-950 border border-emerald-700 rounded shadow-lg overflow-hidden" }, matches.map((m) => (React.createElement("button", { key: m.name, type: "button", onMouseDown: () => selectSuggestion(p, m), className: "w-full text-left px-2 py-1.5 text-sm text-stone-50 hover:bg-emerald-800 flex justify-between" },
+                                                React.createElement("span", null, m.name),
+                                                React.createElement("span", { className: "font-mono text-emerald-400" }, m.handicap))))));
+                                        })()),
+                                React.createElement("div", { className: "col-span-3" },
+                                    React.createElement(MiniStepper, { value: p.handicap, min: -2, onDec: () => updatePlayer(p.id, 'handicap', Math.max(-2, Math.round((Number(p.handicap) - 0.5) * 2) / 2)), onInc: () => updatePlayer(p.id, 'handicap', Math.min(10, Math.round((Number(p.handicap) + 0.5) * 2) / 2)), disabled: Number(p.handicap) >= 10 })),
+                                React.createElement("div", { className: "col-span-3" },
+                                    React.createElement(MiniStepper, { value: p.chukkasWanted, editable: true, onSet: (v) => setChukkasWanted(p, v), onDec: () => setChukkasWanted(p, (Number(p.chukkasWanted) || 0) - 1), onInc: () => setChukkasWanted(p, (Number(p.chukkasWanted) || 0) + 1) })),
+                                React.createElement("button", { onClick: () => removePlayer(p.id), className: "col-span-1 text-emerald-500 hover:text-rose-400 flex justify-center" },
+                                    React.createElement(Trash2, { size: 16 }))),
+                            React.createElement("div", { className: "flex flex-wrap gap-5 mt-2 pl-1 items-center" },
+                                React.createElement("div", { className: "flex items-center gap-2" },
+                                    React.createElement("span", { className: "text-xs text-emerald-500 uppercase tracking-wide" }, "Timing"),
+                                    React.createElement(Segmented, { value: p.timingPref, onChange: (v) => updatePlayer(p.id, 'timingPref', v), options: TIMING_OPTIONS })),
+                                Number(p.handicap) <= -2 ? (React.createElement("span", { className: "text-xs text-teal-400 border border-teal-800 rounded-full px-2 py-0.5" }, "Beginner \u2014 all chukkas slow, grouped together")) : (React.createElement("div", { className: "flex items-center gap-2" },
+                                    React.createElement("span", { className: "text-xs text-emerald-500 uppercase tracking-wide" }, "Slow"),
+                                    React.createElement(MiniStepper, { value: p.slowChukkas, onDec: () => adjustSlow(p, -1), onInc: () => adjustSlow(p, 1), disabled: (Number(p.slowChukkas) || 0) >= (Number(p.chukkasWanted) || 0) }))))));
+                    })),
+                React.createElement("button", { onClick: addPlayer, className: "mt-3 flex items-center gap-1 text-sm text-amber-400 hover:text-amber-300" },
+                    React.createElement(Plus, { size: 16 }),
+                    " Add player")),
+            React.createElement("button", { onClick: generate, className: "flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-emerald-950 font-medium px-5 py-2.5 rounded-md mb-6" },
+                React.createElement(Shuffle, { size: 18 }),
+                " Generate board"),
+            warnings.length > 0 && (React.createElement("div", { className: "mb-8 bg-rose-950/60 border border-rose-800 rounded-lg p-4" },
+                React.createElement("div", { className: "flex items-center gap-2 text-rose-300 text-sm font-medium mb-2" },
+                    React.createElement(AlertTriangle, { size: 16 }),
+                    " Notes"),
+                React.createElement("ul", { className: "text-rose-200 text-sm space-y-1 list-disc list-inside" }, warnings.map((w, i) => (React.createElement("li", { key: i }, w)))))),
+            board && (React.createElement(React.Fragment, null,
+                React.createElement("section", { className: "mb-10" },
+                    React.createElement("div", { className: "flex items-center justify-between mb-3" },
+                        React.createElement("h2", { className: "font-serif text-2xl text-stone-50" }, "Final Board"),
+                        React.createElement("button", { onClick: shareBoard, className: "flex items-center gap-2 bg-emerald-800 hover:bg-emerald-700 text-emerald-50 text-sm px-3 py-1.5 rounded-md" }, "Share Board")),
+                    shareStatus && React.createElement("p", { className: "text-xs text-amber-400 mb-3" }, shareStatus),
+                    React.createElement("div", { className: "overflow-x-auto bg-stone-50 rounded-lg border-2 border-emerald-800" },
+                        React.createElement("table", { className: "w-full border-collapse text-sm" },
+                            React.createElement("thead", null,
+                                React.createElement("tr", null,
+                                    React.createElement("th", { className: "sticky left-0 bg-emerald-800 text-emerald-50 text-left px-3 py-2 font-serif text-base z-10 border border-emerald-700" }, "Player"),
+                                    board.chukkas.map((c) => (React.createElement("th", { key: c.index, className: "bg-emerald-800 text-emerald-50 text-xs font-mono px-2 py-2 text-center min-w-12 border border-emerald-700" },
+                                        "C",
+                                        c.index + 1,
+                                        React.createElement("div", { className: "text-[10px] normal-case text-emerald-300" }, c.displayPace)))))),
+                            React.createElement("tbody", null,
+                                board.valid.map((p, rowIdx) => (React.createElement("tr", { key: p.id, className: rowIdx % 2 === 0 ? 'bg-stone-50' : 'bg-stone-100' },
+                                    React.createElement("td", { className: "sticky left-0 bg-inherit px-3 py-1.5 text-emerald-950 whitespace-nowrap border border-stone-300" },
+                                        p.name,
+                                        " ",
+                                        p.handicap,
+                                        React.createElement("span", { className: "text-stone-400 font-mono text-xs ml-1" },
+                                            "(",
+                                            p.chukkasWanted,
+                                            ")")),
+                                    board.chukkas.map((c) => {
+                                        const inBlue = c.blue.some((pp) => pp.id === p.id);
+                                        const inWhite = c.white.some((pp) => pp.id === p.id);
+                                        return (React.createElement("td", { key: c.index, className: "p-1 text-center align-middle border border-stone-300" },
+                                            inBlue && React.createElement("div", { className: "w-8 h-6 mx-auto rounded bg-blue-800", title: "Blue" }),
+                                            inWhite && React.createElement("div", { className: "w-8 h-6 mx-auto rounded bg-white border border-stone-400", title: "White" }),
+                                            !inBlue && !inWhite && React.createElement("div", { className: "w-8 h-6 mx-auto" })));
+                                    })))),
+                                React.createElement("tr", { className: "bg-blue-900 text-blue-50 font-mono text-xs" },
+                                    React.createElement("td", { className: "sticky left-0 bg-blue-900 px-3 py-1.5 whitespace-nowrap border border-blue-700" }, "Handicap B"),
+                                    board.chukkas.map((c) => {
+                                        const total = c.blue.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+                                        return (React.createElement("td", { key: c.index, className: "text-center py-1.5 border border-blue-700" }, total));
+                                    })),
+                                React.createElement("tr", { className: "bg-stone-200 text-stone-700 font-mono text-xs" },
+                                    React.createElement("td", { className: "sticky left-0 bg-stone-200 px-3 py-1.5 whitespace-nowrap border border-stone-300" }, "Handicap W"),
+                                    board.chukkas.map((c) => {
+                                        const total = c.white.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+                                        return (React.createElement("td", { key: c.index, className: "text-center py-1.5 border border-stone-300" }, total));
+                                    })),
+                                React.createElement("tr", { className: "bg-emerald-800 text-emerald-50 font-mono text-xs" },
+                                    React.createElement("td", { className: "sticky left-0 bg-emerald-800 px-3 py-1.5 whitespace-nowrap border border-emerald-700" }, "Difference"),
+                                    board.chukkas.map((c) => {
+                                        const bt = c.blue.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+                                        const wt = c.white.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+                                        return (React.createElement("td", { key: c.index, className: "text-center py-1.5 border border-emerald-700" }, Math.abs(bt - wt)));
+                                    }))))),
+                    React.createElement("div", { className: "flex items-center gap-4 mt-3 text-xs text-emerald-400" },
+                        React.createElement("span", { className: "flex items-center gap-1.5" },
+                            React.createElement("span", { className: "w-4 h-4 rounded bg-blue-800 inline-block" }),
+                            " Blue"),
+                        React.createElement("span", { className: "flex items-center gap-1.5" },
+                            React.createElement("span", { className: "w-4 h-4 rounded bg-white border border-stone-400 inline-block" }),
+                            " White"),
+                        React.createElement("span", { className: "flex items-center gap-1.5" },
+                            React.createElement("span", { className: "w-4 h-4 rounded inline-block border border-dashed border-emerald-700" }),
+                            " Not playing"))),
+                React.createElement("section", { className: "grid grid-cols-1 md:grid-cols-2 gap-5 mb-10" }, board.chukkas.map((c) => {
+                    const blueSorted = [...c.blue].sort((a, b) => (Number(b.handicap) || 0) - (Number(a.handicap) || 0));
+                    const whiteSorted = [...c.white].sort((a, b) => (Number(b.handicap) || 0) - (Number(a.handicap) || 0));
+                    const blueTotal = c.blue.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+                    const whiteTotal = c.white.reduce((s, p) => s + (Number(p.handicap) || 0), 0);
+                    const diff = Math.abs(blueTotal - whiteTotal);
+                    const diffColor = diff <= 1 ? 'text-teal-600' : diff <= 3 ? 'text-amber-600' : 'text-rose-600';
+                    return (React.createElement("div", { key: c.index, className: "bg-stone-50 text-emerald-950 rounded-lg overflow-hidden border-2 border-emerald-800" },
+                        React.createElement("div", { className: "flex items-center justify-between px-4 py-2 bg-emerald-800 text-emerald-50" },
+                            React.createElement("span", { className: "font-serif text-lg" },
+                                "Chukka ",
+                                c.index + 1),
+                            React.createElement("span", { className: "text-xs uppercase tracking-wide" },
+                                c.displayPace,
+                                " \u00B7 ",
+                                c.players.length,
+                                "/",
+                                board.capacity)),
+                        React.createElement("div", { className: "grid grid-cols-2 divide-x-2 divide-dashed divide-emerald-800" },
+                            React.createElement("div", { className: "bg-blue-900 text-blue-50 p-3" },
+                                React.createElement("p", { className: "text-xs uppercase tracking-wide text-blue-300 mb-2" }, "Blue"),
+                                React.createElement("ul", { className: "space-y-1 text-sm" }, blueSorted.map((p) => (React.createElement("li", { key: p.id, className: "flex justify-between" },
+                                    React.createElement("span", null, p.name),
+                                    React.createElement("span", { className: "font-mono text-blue-300" }, p.handicap))))),
+                                React.createElement("p", { className: "text-xs mt-2 pt-2 border-t border-blue-700 font-mono" },
+                                    "Total ",
+                                    blueTotal)),
+                            React.createElement("div", { className: "bg-stone-100 p-3" },
+                                React.createElement("p", { className: "text-xs uppercase tracking-wide text-stone-500 mb-2" }, "White"),
+                                React.createElement("ul", { className: "space-y-1 text-sm" }, whiteSorted.map((p) => (React.createElement("li", { key: p.id, className: "flex justify-between" },
+                                    React.createElement("span", null, p.name),
+                                    React.createElement("span", { className: "font-mono text-stone-500" }, p.handicap))))),
+                                React.createElement("p", { className: "text-xs mt-2 pt-2 border-t border-stone-300 font-mono" },
+                                    "Total ",
+                                    whiteTotal))),
+                        React.createElement("div", { className: `px-4 py-1.5 text-xs font-mono ${diffColor} bg-emerald-950/5` },
+                            "Handicap diff: ",
+                            diff)));
+                })))),
+            React.createElement("footer", { className: "text-xs text-emerald-500 border-t border-emerald-800 pt-4" }, "Chukkas fill in order, so only the last one can come up short. Slow chukkas lean toward lower-handicap players and fast chukkas toward higher-handicap ones as a soft nudge, not a hard rule \u2014 15 attempts are tried and the best-balanced one is kept."))));
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(ChukkaBoardApp));
+</script>
+</body>
+</html>
