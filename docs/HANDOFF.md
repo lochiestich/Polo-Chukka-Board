@@ -7,37 +7,20 @@ club-specific rules layered on top, arrived at through a long back-and-forth of
 "here's a real board that went wrong, fix it" iterations. Currently deployed as a
 standalone HTML file on GitHub Pages / installed to an Android home screen as a PWA.
 
-## Files in this handoff
+## Files
 
-- **`chukka-board.jsx`** — the source of truth. A single-file React component.
-  Uses `lucide-react` for icons and plain Tailwind utility classes. This is what
-  should actually be edited going forward.
-- **`chukka-board-app.html`** — a hand-compiled, dependency-free standalone build
-  of the above, for hosting as a PWA. Built via a manual pipeline (below), not a
-  real bundler — see the recommendation immediately below.
+- **`src/App.jsx`** — the source of truth (was `chukka-board.jsx` in the original
+  handoff). A single-file React component using `lucide-react` icons and Tailwind.
+- **`legacy/chukka-board-app.html`** — the old hand-compiled standalone build, kept
+  for reference only. Nothing serves it.
 
-## Recommended first step: set up a real build
+## Build and deploy
 
-`chukka-board-app.html` was produced by a workaround, built in an environment with
-no npm/network access: strip the `import`/`export` lines from the .jsx, prepend
-hand-written inline-SVG stand-ins for the five `lucide-react` icons actually used
-(`Plus`, `Minus`, `Trash2`, `Shuffle`, `AlertTriangle`), run the result through
-TypeScript's `transpileModule` (JSX → `React.createElement`, no bundler), and paste
-it into a static HTML file alongside React/ReactDOM UMD builds pulled from a CDN.
-It works, but it's fragile — I (Claude) introduced and had to catch several real
-bugs doing it this way (duplicate bootstrap lines from a bad re-extraction, a
-missing icon-shim, a stray extra closing paren in hand-edited code), purely because
-there's no real build step/bundler catching mistakes before they ship.
-
-With real npm access, the better move is a proper scaffold:
-
-```
-npm create vite@latest chukka-board -- --template react
-```
-
-then drop `chukka-board.jsx` in as `src/App.jsx`, `npm install lucide-react`, and
-build/deploy normally (Vite build → GitHub Actions → Pages, or Vercel/Netlify).
-Real error messages, hot reload, no more manual icon-shimming.
+A Vite + React build replaced the old hand-compiled HTML file. `npm run dev` for
+local work and `npm run build` for production. Tailwind v3 is compiled at build
+time and html2canvas is bundled, so the app loads nothing from a CDN.
+`.github/workflows/deploy.yml` builds and deploys to GitHub Pages on every push
+to `main`; Pages must be set to **Source: GitHub Actions** in the repo settings.
 
 ## The data model
 
@@ -120,10 +103,43 @@ order, **highest first**:
    (closest-ranked together); prefer splits where each pair ends up on opposite
    sides, so a tied sum doesn't still produce "2 strong + 2 weak" vs "4 mediums".
 
+### Stage 1b — `repairChukkas()`: swap players between chukkas
+
+The greedy fill sometimes produces a chukka whose roster *no* split can make
+compliant (e.g. too many high-goal players alongside beginners). After the fill,
+the repair pass takes the worst such chukka (by `rosterBalanceKey()`: the best
+achievable `[diffCapPenalty, hardCapPenalty, weakTeamPenalty, beginnerPenalty]`
+over all splits, ignoring shirt history) and tries swapping each of its players
+with each player in every other chukka. It takes the swap that most improves the
+two chukkas' combined key, in the same priority order as Stage 2 (gap cap first).
+Swaps are skipped if they would:
+
+- put a player in a chukka they're already in;
+- add an early/late timing miss for either player;
+- take a slow-labelled chukka away from someone who still needs one (beginners
+  count as needing all of theirs).
+
+A swap keeps every player's chukka count and every chukka's size, so the
+pour-fill order and the requested totals are untouched. Every accepted swap
+strictly lowers the day's total key, so it can't loop; it's also capped at
+`numChukkas × 4` swaps. The penalty formulas live in one shared
+`balancePenalties()` helper used by both this pass and `assignColours()`, so the
+two can't drift apart.
+
+Measured on 15 rosters (the sample, adversarial beginner/timing variants and 10
+random ones) × 6 runs: total beginner-side rule breaches fell from ~480 to ~10,
+the one gap-cap breach disappeared, and beginner grouping was unchanged.
+Generating takes ~0.2–0.6s instead of ~0.1–0.2s.
+
 ### Outer loop — 15 attempts, best kept
 
-`fillChukkas` is non-deterministic after the first attempt (small random jitter on
-tie-break scores). All 15 go through both stages; lowest weighted score wins:
+`fillChukkas` is deterministic on the first attempt and adds random jitter
+(`FILL_JITTER`, up to +20) to every score on later ones. That's enough to
+reshuffle the soft pace/handicap nudges (worth tens of points) so attempts
+genuinely differ, but far too small to affect deficit ordering (×1000) or the
+−100000 helper rule. (It used to be ±0.5, which only broke exact ties, so the
+attempts mostly converged on the same result.) Each attempt goes fill → repair →
+colours, and the lowest weighted score wins:
 
 ```
 unmet×100000 + gapBreaches×3000 + violations.length×1500 + capBreaches×1000
@@ -131,17 +147,8 @@ unmet×100000 + gapBreaches×3000 + violations.length×1500 + capBreaches×1000
 ```
 
 (`gapBreaches`/`capBreaches` mirror the per-chukka diff-cap/shirt-cap checks across
-the whole day; `violations` = timing-preference misses; `unmet` = requested chukkas
-that couldn't be placed anywhere.)
-
-**Discussed but not implemented** — worth revisiting if this stops being good
-enough:
-- The jitter is tiny (±0.5, on scores in the thousands) — it mostly only breaks
-  *exact* ties, so the 15 attempts are probably converging on near-identical
-  results most of the time. Scaling it up would make the randomness matter more.
-- A **repair pass** (after the initial fill, find the worst-gap chukka and try
-  swapping a player with a well-balanced one) would likely outperform "throw more
-  random restarts at it" — probably the more correct long-term fix.
+the whole day; `violations` = timing-preference misses, recomputed after repair;
+`unmet` = requested chukkas that couldn't be placed anywhere.)
 
 ## Display pace (cosmetic only)
 
@@ -175,6 +182,9 @@ of nesting.
 ## Other features
 
 - **Name type-ahead** against `MASTER_HANDICAPS`.
+- **Roster layout**: on phones the name/handicap/chukkas row uses fixed-width
+  stepper columns (`ROSTER_GRID`) so values like `-1.5` fit; from the `sm`
+  breakpoint up it's the original 12-column grid.
 - **`localStorage` persistence** of the roster (not the generated board) between
   visits, wrapped in try/catch, degrades gracefully if storage is unavailable.
 - **Final Board**: grid table, players (sorted by handicap, highest first) down the
@@ -183,8 +193,8 @@ of nesting.
 - **Per-chukka cards**: Blue/White rosters with handicap totals, each sorted
   highest-to-lowest.
 - **Share Board button**: exports the Final Board **as a PNG image** (not text),
-  via `html2canvas` (lazy-loaded from a CDN on first use — currently
-  `cdnjs.cloudflare.com`, chosen deliberately for broad CSP compatibility). Uses
+  via `html2canvas` (bundled from npm, split into its own chunk and only loaded
+  the first time someone shares — no CDN involved). Uses
   the Web Share API on Android for a native share-sheet, falls back to a direct
   download elsewhere.
 - **Warnings panel**: surfaces anything the soft rules couldn't fully satisfy —

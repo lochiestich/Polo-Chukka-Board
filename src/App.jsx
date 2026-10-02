@@ -262,7 +262,7 @@ function MiniStepper({ value, onDec, onInc, onSet, disabled, min = 0, editable =
           className="w-9 text-center bg-transparent font-mono text-stone-50 text-sm border border-emerald-800 rounded focus:outline-none focus:border-amber-500"
         />
       ) : (
-        <span className="w-6 text-center font-mono text-stone-50 text-sm">{value}</span>
+        <span className="min-w-6 px-0.5 text-center font-mono text-stone-50 text-sm">{value}</span>
       )}
       <button
         onClick={onInc}
@@ -274,6 +274,10 @@ function MiniStepper({ value, onDec, onInc, onSet, disabled, min = 0, editable =
     </div>
   );
 }
+
+// Roster row layout. On phones the steppers get fixed-width columns and the
+// name takes whatever is left; from the sm breakpoint up it's a 12-column grid.
+const ROSTER_GRID = 'grid grid-cols-[minmax(0,1fr)_6rem_5.5rem_1.25rem] sm:grid-cols-12 gap-2';
 
 const TIMING_OPTIONS = [
   { value: 'early', label: 'Early' },
@@ -318,6 +322,41 @@ function buildPaceLabels(valid, numChukkas, totalRequested) {
   return labels;
 }
 
+// Early timing preference leans toward chukkas before `firstTwoThirds`; late
+// leans toward chukkas at or after `lastTwoThirdsStart`.
+function timingWindow(numChukkas) {
+  return {
+    firstTwoThirds: Math.ceil((numChukkas * 2) / 3),
+    lastTwoThirdsStart: Math.floor(numChukkas / 3),
+  };
+}
+
+function outOfTimingWindow(pref, index, win) {
+  if (pref === 'early') return index >= win.firstTwoThirds;
+  if (pref === 'late') return index < win.lastTwoThirdsStart;
+  return false;
+}
+
+function timingViolations(chukkas, valid, numChukkas) {
+  const win = timingWindow(numChukkas);
+  const violations = [];
+  valid.forEach((p) => {
+    if (p.timingPref === 'none') return;
+    chukkas.forEach((c) => {
+      if (!c.players.some((pp) => pp.id === p.id)) return;
+      if (outOfTimingWindow(p.timingPref, c.index, win)) violations.push({ name: p.name, chukka: c.index + 1, pref: p.timingPref });
+    });
+  });
+  return violations;
+}
+
+// Random tie-break noise added to each fill score on every attempt after the
+// first. Big enough to reshuffle the soft pace/handicap nudges (which are worth
+// tens of points) so the attempts genuinely differ, but far too small to touch
+// the deficit ordering (×1000) that makes the pour-fill pour, or the -100000
+// one-helper-per-beginner-chukka rule.
+const FILL_JITTER = 20;
+
 // Fill chukkas like pouring water: Chukka 1 fills completely before Chukka 2,
 // and so on. Whoever has the most chukkas left always gets first claim on a
 // spot, so only the tail can end up short. Early/late preference is a strong
@@ -341,8 +380,7 @@ function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter) {
     actualPace[p.id] = { slow: 0 };
   });
 
-  const firstTwoThirds = Math.ceil((numChukkas * 2) / 3); // early leans toward before this index
-  const lastTwoThirdsStart = Math.floor(numChukkas / 3); // late leans toward at or after this index
+  const { firstTwoThirds, lastTwoThirdsStart } = timingWindow(numChukkas);
 
   chukkas.forEach((c) => {
     const chosenIds = new Set();
@@ -389,7 +427,7 @@ function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter) {
           const avgSoFar = c.players.reduce((s, cp) => s + (Number(cp.handicap) || 0), 0) / c.players.length;
           if (avgSoFar > 0.5) score -= (avgSoFar - 0.5) * 15;
         }
-        score += jitter ? Math.random() * 0.5 : 0;
+        score += jitter ? Math.random() * FILL_JITTER : 0;
         if (score > bestScore) {
           bestScore = score;
           bestP = p;
@@ -417,17 +455,161 @@ function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter) {
     assigned[p.id] = (Number(p.chukkasWanted) || 0) - (n.slow + n.none);
   });
 
-  const violations = [];
-  valid.forEach((p) => {
-    if (p.timingPref === 'none') return;
-    chukkas.forEach((c) => {
-      if (!c.players.some((pp) => pp.id === p.id)) return;
-      const outOfWindow = p.timingPref === 'early' ? c.index >= firstTwoThirds : c.index < lastTwoThirdsStart;
-      if (outOfWindow) violations.push({ name: p.name, chukka: c.index + 1, pref: p.timingPref });
-    });
-  });
+  return { chukkas, assigned, actualPace, violations: timingViolations(chukkas, valid, numChukkas) };
+}
 
-  return { chukkas, assigned, actualPace, violations };
+// The balance rules for one Blue/White split, in priority order (see the
+// comment in assignColours for why the gap cap must come first). Shared by
+// assignColours and the repair pass so the two can never disagree.
+function balancePenalties(sumBlue, sumWhite, blueBeginners, whiteBeginners, blueHigh, whiteHigh) {
+  const diff = Math.abs(sumBlue - sumWhite);
+  const hasBeginner = blueBeginners > 0 || whiteBeginners > 0;
+  return {
+    diff,
+    diffCapPenalty: Math.max(0, diff - (hasBeginner ? 3 : 2)),
+    hardCapPenalty:
+      (blueBeginners > 0 && sumBlue > 2.5 ? sumBlue - 2.5 : 0) + (whiteBeginners > 0 && sumWhite > 2.5 ? sumWhite - 2.5 : 0),
+    weakTeamPenalty:
+      (blueBeginners > 0 && sumBlue < -6 ? -6 - sumBlue : 0) + (whiteBeginners > 0 && sumWhite < -6 ? -6 - sumWhite : 0),
+    beginnerPenalty:
+      (blueBeginners > 0 ? Math.max(0, blueHigh - 1) : 0) + (whiteBeginners > 0 ? Math.max(0, whiteHigh - 1) : 0),
+  };
+}
+
+const comboCache = {};
+function cachedCombinations(n, k) {
+  const cacheKey = `${n}:${k}`;
+  if (!comboCache[cacheKey]) comboCache[cacheKey] = combinations([...Array(n).keys()], k);
+  return comboCache[cacheKey];
+}
+
+// The best balance a chukka's roster could possibly get from any split,
+// ignoring shirt-colour history: [gap cap, beginner-side 2.5 cap, beginner-side
+// -6 floor, one helper per beginner side]. All zeros means fully compliant.
+function rosterBalanceKey(roster) {
+  const total = roster.length;
+  if (total < 2) return [0, 0, 0, 0];
+  const hs = roster.map((p) => Number(p.handicap) || 0);
+  let best = null;
+  for (const comboIdx of cachedCombinations(total, Math.ceil(total / 2))) {
+    let sumBlue = 0, sumWhite = 0, blueBeginners = 0, whiteBeginners = 0, blueHigh = 0, whiteHigh = 0;
+    let ci = 0;
+    for (let i = 0; i < total; i++) {
+      const h = hs[i];
+      const inBlue = comboIdx[ci] === i;
+      if (inBlue) ci++;
+      if (inBlue) {
+        sumBlue += h;
+        if (h <= -2) blueBeginners++;
+        if (h > 0) blueHigh++;
+      } else {
+        sumWhite += h;
+        if (h <= -2) whiteBeginners++;
+        if (h > 0) whiteHigh++;
+      }
+    }
+    const pen = balancePenalties(sumBlue, sumWhite, blueBeginners, whiteBeginners, blueHigh, whiteHigh);
+    const key = [pen.diffCapPenalty, pen.hardCapPenalty, pen.weakTeamPenalty, pen.beginnerPenalty];
+    if (!best || compareKeys(key, best) < 0) best = key;
+    if (best.every((k) => k <= 1e-9)) break;
+  }
+  return best;
+}
+
+const addKeys = (a, b) => a.map((x, i) => x + b[i]);
+const isClean = (key) => key.every((k) => k <= 1e-9);
+
+// Repair pass, run after the pour-fill. Some chukkas come out of the greedy
+// fill with a roster that no Blue/White split can make compliant (e.g. too
+// many high-goal players alongside beginners). For the worst such chukka, try
+// swapping one of its players with a player from another chukka, and take the
+// swap that most improves the two chukkas' combined balance key — same
+// priority order as assignColours, gap cap first. A swap keeps every player's
+// chukka count and every chukka's size, so the pour-fill and the requested
+// totals are untouched. A swap is never taken if it adds an early/late miss
+// for either player, or takes a slow-labelled chukka away from someone who
+// still needs one. Every accepted swap strictly improves the day's total
+// balance key, so this can't loop; it stops when nothing more can be fixed.
+function repairChukkas(chukkas, valid, numChukkas, actualPace) {
+  const win = timingWindow(numChukkas);
+  const slowNeed = {};
+  const slowCount = {};
+  valid.forEach((p) => {
+    const wanted = Number(p.chukkasWanted) || 0;
+    slowNeed[p.id] = (Number(p.handicap) || 0) <= -2 ? wanted : Number(p.slowChukkas) || 0;
+    slowCount[p.id] = 0;
+  });
+  chukkas.forEach((c) => c.players.forEach((p) => c.pace === 'slow' && slowCount[p.id]++));
+
+  const keys = chukkas.map((c) => rosterBalanceKey(c.players));
+  const stuck = new Set();
+  let swaps = 0;
+  const maxSwaps = numChukkas * 4;
+
+  while (swaps < maxSwaps) {
+    let worst = -1;
+    keys.forEach((k, i) => {
+      if (stuck.has(i) || isClean(k)) return;
+      if (worst === -1 || compareKeys(k, keys[worst]) > 0) worst = i;
+    });
+    if (worst === -1) break;
+
+    const X = chukkas[worst];
+    const xIds = new Set(X.players.map((p) => p.id));
+    let bestSwap = null;
+    chukkas.forEach((Y, j) => {
+      if (j === worst) return;
+      const yIds = new Set(Y.players.map((p) => p.id));
+      const before = addKeys(keys[worst], keys[j]);
+      const slowDelta = (Y.pace === 'slow' ? 1 : 0) - (X.pace === 'slow' ? 1 : 0); // for whoever moves X → Y
+      X.players.forEach((a, ai) => {
+        if (yIds.has(a.id)) return;
+        Y.players.forEach((b, bi) => {
+          if (xIds.has(b.id)) return;
+          const missesBefore =
+            (outOfTimingWindow(a.timingPref, X.index, win) ? 1 : 0) + (outOfTimingWindow(b.timingPref, Y.index, win) ? 1 : 0);
+          const missesAfter =
+            (outOfTimingWindow(a.timingPref, Y.index, win) ? 1 : 0) + (outOfTimingWindow(b.timingPref, X.index, win) ? 1 : 0);
+          if (missesAfter > missesBefore) return;
+          const slowMet = (p, count) => Math.min(slowNeed[p.id], count);
+          const slowBefore = slowMet(a, slowCount[a.id]) + slowMet(b, slowCount[b.id]);
+          const slowAfter = slowMet(a, slowCount[a.id] + slowDelta) + slowMet(b, slowCount[b.id] - slowDelta);
+          if (slowAfter < slowBefore) return;
+
+          const newX = X.players.slice();
+          newX[ai] = b;
+          const newY = Y.players.slice();
+          newY[bi] = a;
+          const kx = rosterBalanceKey(newX);
+          const ky = rosterBalanceKey(newY);
+          const after = addKeys(kx, ky);
+          if (compareKeys(after, before) >= 0) return;
+          if (!bestSwap || compareKeys(after, bestSwap.after) < 0) bestSwap = { j, ai, bi, kx, ky, after, slowDelta };
+        });
+      });
+    });
+
+    if (!bestSwap) {
+      stuck.add(worst);
+      continue;
+    }
+    const Y = chukkas[bestSwap.j];
+    const a = X.players[bestSwap.ai];
+    const b = Y.players[bestSwap.bi];
+    X.players[bestSwap.ai] = b;
+    Y.players[bestSwap.bi] = a;
+    slowCount[a.id] += bestSwap.slowDelta;
+    slowCount[b.id] -= bestSwap.slowDelta;
+    keys[worst] = bestSwap.kx;
+    keys[bestSwap.j] = bestSwap.ky;
+    stuck.clear(); // a swap can unblock a chukka that was stuck before
+    swaps++;
+  }
+
+  valid.forEach((p) => {
+    actualPace[p.id] = { slow: Math.min(slowNeed[p.id], slowCount[p.id]) };
+  });
+  return swaps;
 }
 
 // Within each chukka, try every possible way to split the roster into two
@@ -515,14 +697,14 @@ function assignColours(chukkas, valid) {
       // gap further; avoid stacking strong/weak pairs together. Each entry
       // is compared in turn — only moving to the next one if the current
       // one is tied.
-      const hasBeginner = blueBeginners > 0 || whiteBeginners > 0;
-      const hardCapPenalty =
-        (blueBeginners > 0 && sumBlue > 2.5 ? sumBlue - 2.5 : 0) + (whiteBeginners > 0 && sumWhite > 2.5 ? sumWhite - 2.5 : 0);
-      const beginnerPenalty =
-        (blueBeginners > 0 ? Math.max(0, blueHigh - 1) : 0) + (whiteBeginners > 0 ? Math.max(0, whiteHigh - 1) : 0);
-      const weakTeamPenalty =
-        (blueBeginners > 0 && sumBlue < -6 ? -6 - sumBlue : 0) + (whiteBeginners > 0 && sumWhite < -6 ? -6 - sumWhite : 0);
-      const diffCapPenalty = Math.max(0, diff - (hasBeginner ? 3 : 2));
+      const { diffCapPenalty, hardCapPenalty, weakTeamPenalty, beginnerPenalty } = balancePenalties(
+        sumBlue,
+        sumWhite,
+        blueBeginners,
+        whiteBeginners,
+        blueHigh,
+        whiteHigh
+      );
       const key = [diffCapPenalty, hardCapPenalty, weakTeamPenalty, beginnerPenalty, changeCapPenalty, changeCost, diff, pairPenalty];
       const better = !best || compareKeys(key, best.key) < 0;
       if (better) {
@@ -644,13 +826,15 @@ export default function ChukkaBoardApp() {
     const ATTEMPTS = 15;
     let best = null;
     for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-      const { chukkas, assigned, actualPace, violations } = fillChukkas(
+      const { chukkas, assigned, actualPace } = fillChukkas(
         valid,
         numChukkas,
         capacityPerChukka,
         paceLabels,
         attempt > 0
       );
+      repairChukkas(chukkas, valid, numChukkas, actualPace);
+      const violations = timingViolations(chukkas, valid, numChukkas);
       const { history, totalDiff, totalChanges } = assignColours(chukkas, valid);
       const unmet = valid.reduce((s, p) => s + Math.max(0, (Number(p.chukkasWanted) || 0) - assigned[p.id]), 0);
       const paceMismatch = valid.reduce((s, p) => {
@@ -728,32 +912,12 @@ export default function ChukkaBoardApp() {
     setBoard({ ...best, numChukkas, capacity: capacityPerChukka, teamSize, valid: displayValid });
   }
 
-  function loadHtml2Canvas() {
-    return new Promise((resolve, reject) => {
-      if (window.html2canvas) {
-        resolve(window.html2canvas);
-        return;
-      }
-      const existing = document.getElementById('html2canvas-cdn');
-      if (existing) {
-        existing.addEventListener('load', () => resolve(window.html2canvas));
-        existing.addEventListener('error', reject);
-        return;
-      }
-      const script = document.createElement('script');
-      script.id = 'html2canvas-cdn';
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js';
-      script.onload = () => resolve(window.html2canvas);
-      script.onerror = reject;
-      document.head.appendChild(script);
-    });
-  }
-
   async function shareBoard() {
     if (!board || !boardRef.current) return;
     setShareStatus('Preparing image…');
     try {
-      const html2canvas = await loadHtml2Canvas();
+      // Bundled, but split into its own chunk so it only downloads the first time someone shares.
+      const { default: html2canvas } = await import('html2canvas');
       const canvas = await html2canvas(boardRef.current, { backgroundColor: '#fafaf9', scale: 2 });
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('Could not create image');
@@ -809,17 +973,20 @@ export default function ChukkaBoardApp() {
         {/* Roster */}
         <section className="mb-6">
           <div className="bg-emerald-900/60 border border-emerald-800 rounded-lg overflow-hidden">
-            <div className="grid grid-cols-12 gap-2 px-4 py-2 text-xs uppercase tracking-wide text-emerald-400 border-b border-emerald-800">
-              <div className="col-span-5">Name</div>
-              <div className="col-span-3">Handicap</div>
-              <div className="col-span-3">Chukkas wanted</div>
-              <div className="col-span-1" />
+            <div className={`${ROSTER_GRID} px-4 py-2 text-xs uppercase tracking-wide text-emerald-400 border-b border-emerald-800`}>
+              <div className="sm:col-span-5">Name</div>
+              <div className="sm:col-span-3">Handicap</div>
+              <div className="sm:col-span-3">
+                <span className="sm:hidden">Chukkas</span>
+                <span className="hidden sm:inline">Chukkas wanted</span>
+              </div>
+              <div className="sm:col-span-1" />
             </div>
             {players.map((p) => {
               return (
                 <div key={p.id} className="border-b border-emerald-800/60 last:border-b-0 px-4 py-2">
-                  <div className="grid grid-cols-12 gap-2 items-center">
-                    <div className="col-span-5 relative">
+                  <div className={`${ROSTER_GRID} items-center`}>
+                    <div className="sm:col-span-5 relative">
                       <input
                         className="w-full bg-transparent border border-emerald-800 rounded px-2 py-1 text-stone-50 placeholder-emerald-600"
                         placeholder="Player name"
@@ -855,7 +1022,7 @@ export default function ChukkaBoardApp() {
                           );
                         })()}
                     </div>
-                    <div className="col-span-3">
+                    <div className="sm:col-span-3">
                       <MiniStepper
                         value={p.handicap}
                         min={-2}
@@ -864,7 +1031,7 @@ export default function ChukkaBoardApp() {
                         disabled={Number(p.handicap) >= 10}
                       />
                     </div>
-                    <div className="col-span-3">
+                    <div className="sm:col-span-3">
                       <MiniStepper
                         value={p.chukkasWanted}
                         editable
@@ -873,7 +1040,7 @@ export default function ChukkaBoardApp() {
                         onInc={() => setChukkasWanted(p, (Number(p.chukkasWanted) || 0) + 1)}
                       />
                     </div>
-                    <button onClick={() => removePlayer(p.id)} className="col-span-1 text-emerald-500 hover:text-rose-400 flex justify-center">
+                    <button onClick={() => removePlayer(p.id)} className="sm:col-span-1 text-emerald-500 hover:text-rose-400 flex justify-center">
                       <Trash2 size={16} />
                     </button>
                   </div>
@@ -1077,7 +1244,8 @@ export default function ChukkaBoardApp() {
         <footer className="text-xs text-emerald-500 border-t border-emerald-800 pt-4">
           Chukkas fill in order, so only the last one can come up short. Slow chukkas lean toward
           lower-handicap players and fast chukkas toward higher-handicap ones as a soft nudge, not
-          a hard rule — 15 attempts are tried and the best-balanced one is kept.
+          a hard rule — 15 attempts are tried, each followed by a repair pass that swaps players
+          between chukkas to fix any that can't be balanced, and the best one is kept.
         </footer>
       </div>
     </div>
