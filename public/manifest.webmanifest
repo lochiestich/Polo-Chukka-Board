@@ -1,0 +1,10 @@
+{
+  "name": "Chukka Board",
+  "short_name": "Chukka Board",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#022c22",
+  "theme_color": "#022c22",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

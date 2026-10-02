@@ -1,0 +1,24 @@
+{
+  "name": "polo-chukka-board",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Chukka scheduling board for Manyatta Polo Club",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "lucide-react": "^1.50.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.28",
+    "tailwindcss": "^3.4.19",
+    "vite": "^6.4.3"
+  }
+}
