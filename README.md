@@ -15,9 +15,13 @@ npm install
 npm run dev      # local dev server with hot reload
 npm run build    # production build into dist/
 npm run preview  # serve the production build locally
+npm run sanity   # run the scheduler over the club's real rosters and check it
 ```
 
-All the app code is in `src/App.jsx`.
+The scheduling logic is in `src/scheduler.js`; the UI is in `src/App.jsx`.
+`npm run sanity` runs every roster in `scripts/rosters.mjs` (taken from the
+club's hand-made boards) through both boards, prints a quality table and fails
+if a structural rule breaks. CI runs it before every deploy.
 
 ## Deployment
 

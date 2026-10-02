@@ -7,7 +7,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sanity": "node scripts/sanity.mjs"
   },
   "dependencies": {
     "html2canvas": "^1.4.1",
