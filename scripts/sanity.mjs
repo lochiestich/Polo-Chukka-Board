@@ -8,12 +8,14 @@ const RUNS = Number(process.argv[2] || 5);
 // SCHEDULER=path lets you measure another version of the scheduler (e.g. an old one) against the same rules.
 const { generateBoard } = await import(process.env.SCHEDULER ? new URL(process.env.SCHEDULER, `file://${process.cwd()}/`).href : '../src/scheduler.js');
 const MODES = (process.env.MODES || 'standard,fast').split(',');
+const PLACEMENTS = (process.env.PLACEMENTS || 'end,start,mixed').split(',');
 const h = (p) => Number(p.handicap) || 0;
 const sum = (side) => side.reduce((s, p) => s + h(p), 0);
 const failures = [];
 
 function measure(name, board) {
-  const m = { gap: 0, side: 0, tooFast: 0, timing: board.violations.length, unmet: board.unmet, fast: 0, pairs: 0, slots: 0, begMedium: 0, begSlots: 0, shirts: 0 };
+  const m = { gap: 0, side: 0, tooFast: 0, timing: board.violations.length, unmet: board.unmet, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0 };
+  const last = Math.max(1, board.chukkas.length - 1);
   board.chukkas.forEach((c, i) => {
     // structural invariants
     const ids = c.players.map((p) => p.id);
@@ -40,7 +42,9 @@ function measure(name, board) {
       if (prev || next) m.pairs++;
       if (isBeginner(p)) {
         m.begSlots++;
-        if (c.players.filter(isBeginner).length <= 2) m.begMedium++;
+        if (c.players.filter(isBeginner).length >= 3) m.begBlock++;
+        if (prev || next) m.begRun++;
+        m.begPos += i / last;
       }
     });
   });
@@ -51,28 +55,31 @@ function measure(name, board) {
   return m;
 }
 
-const cols = ['unmet', 'gap', 'side', 'tooFast', 'timing', 'fast', 'pairs%', 'begMix%', 'shirts', 'ms'];
-console.log('roster'.padEnd(26) + 'mode'.padEnd(9) + cols.map((c) => c.padStart(8)).join(''));
+const cols = ['unmet', 'gap', 'side', 'tooFast', 'timing', 'fast', 'pairs%', 'block%', 'begRun%', 'begPos', 'shirts', 'ms'];
+console.log('roster'.padEnd(24) + 'mode'.padEnd(9) + 'beg'.padEnd(7) + cols.map((c) => c.padStart(8)).join(''));
 for (const [rname, roster] of Object.entries(ROSTERS)) {
-  for (const mode of MODES) {
-    const tot = { unmet: 0, gap: 0, side: 0, tooFast: 0, timing: 0, fast: 0, pairs: 0, slots: 0, begMedium: 0, begSlots: 0, shirts: 0, ms: 0 };
+  for (const placement of PLACEMENTS) for (const mode of MODES) {
+    const tot = { unmet: 0, gap: 0, side: 0, tooFast: 0, timing: 0, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0, ms: 0 };
     for (let r = 0; r < RUNS; r++) {
       const t0 = performance.now();
-      const { board, error } = generateBoard(roster, mode);
+      const { board, error } = generateBoard(roster, mode, { beginnerPlacement: placement });
       tot.ms += performance.now() - t0;
       if (error) { failures.push(`${rname}: ${error}`); continue; }
-      const m = measure(`${rname} [${mode}]`, board);
+      const m = measure(`${rname} [${mode}/${placement}]`, board);
       for (const k of Object.keys(m)) tot[k] += m[k];
     }
     const avg = (k) => (tot[k] / RUNS).toFixed(1);
     const row = [avg('unmet'), avg('gap'), avg('side'), avg('tooFast'), avg('timing'), avg('fast'),
-      ((100 * tot.pairs) / tot.slots).toFixed(0), tot.begSlots ? ((100 * tot.begMedium) / tot.begSlots).toFixed(0) : '-',
+      ((100 * tot.pairs) / tot.slots).toFixed(0),
+      tot.begSlots ? ((100 * tot.begBlock) / tot.begSlots).toFixed(0) : '-',
+      tot.begSlots ? ((100 * tot.begRun) / tot.begSlots).toFixed(0) : '-',
+      tot.begSlots ? (tot.begPos / tot.begSlots).toFixed(2) : '-',
       avg('shirts'), avg('ms')];
-    console.log(rname.padEnd(26) + mode.padEnd(9) + row.map((c) => String(c).padStart(8)).join(''));
+    console.log(rname.padEnd(24) + mode.padEnd(9) + placement.padEnd(7) + row.map((c) => String(c).padStart(8)).join(''));
   }
 }
 console.log('\nPer-board averages over', RUNS, 'runs. gap/side = rule excess; tooFast = -1.5/-2 slots in fast chukkas;');
-console.log('timing = early/late misses; fast = fast chukkas; pairs% = slots played back-to-back; begMix% = beginner slots in mixed chukkas (two or fewer beginners).');
+console.log('timing = early/late misses; fast = fast chukkas; pairs% = slots played back-to-back;\nblock% = beginner slots in a chukka with 3+ beginners (club boards: ~85%); begRun% = beginner slots next to another of their own;\nbegPos = where beginners play, 0 = start of day, 1 = end.');
 if (failures.length) {
   console.error('\nFAILED:\n' + [...new Set(failures)].join('\n'));
   process.exit(1);

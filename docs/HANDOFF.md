@@ -47,9 +47,35 @@ chukkas for the higher-goal players.
 
 ## Club rules (agreed October 2026, from the club's own boards)
 
-- **Beginners (-2)**: about two-thirds of their chukkas slow
-  (`BEGINNER_SLOW_SHARE`), the rest can be medium; never in a fast chukka; pulled
-  together in slow chukkas, but at most two in a medium chukka so it stays medium.
+What the club's hand-made boards do with beginners (chukka: number of -2s):
+
+| Board | Beginners per chukka |
+|---|---|
+| Sat 2.00 (13 chukkas) | none in 1–9, then 10: 4, 11: 4, 12: 3, 13: 3 |
+| Sun 10.30 (12) | none in 1–7, then 8: 2, 9: 1, 10: 3, 11: 4, 12: 4 |
+| Sat 1PM (14) | none in 1–8, then 9: 1, 10: 1, 11: 5, 12: 3, 13: 5, 14: 5 |
+| Sat 12 noon (8) | 1: 1, 2: 2, 3: 3, 6: 3, 7: 1, 8: 6 |
+| Sun 10am (6) | 1: 3, 2: 4, 5: 3, 6: ~3 |
+
+So: a block of consecutive beginner chukkas (3–5 beginners each, usually at
+the end of a Saturday afternoon, the start of a Sunday morning), each beginner
+playing their chukkas in a row, with one or two beginners mixed into the medium
+chukkas just before the block. 75–100% of beginner chukkas are in the block.
+With End, the scheduler now reproduces this closely: on Sat 2.00 beginners play
+at 0.85 of the way through the day (the club's board: chukkas 10–13 of 13), and
+79–90% of beginner chukkas are in a block on the real rosters.
+
+
+- **Beginners (-2)**: three-quarters of their chukkas slow (`BEGINNER_SLOW_SHARE`),
+  the rest medium; never in a fast chukka; at most two in a medium chukka so it
+  stays medium.
+- **Beginners play as a block**: the slow chukkas are one block of consecutive
+  chukkas at the **start** or **end** of the day, or **mixed** (spread in pairs) —
+  a Start / Mixed / End setting in the app, default End. Beginners are pulled hard
+  into the block (`BEGINNER_PULL`, up to four per chukka, six at most), a slow
+  chukka takes two helpers at most, and a beginner's medium chukka sits right
+  next to the block as a lead-in (`BEGINNER_LEAD_IN`).
+- **0.5s count as helpers** (anything above 0), confirmed by the club.
 - **Improvers (-1.5)**: at least half their chukkas slow (`IMPROVER_SLOW_SHARE`,
   or more if they ask), never in a fast chukka.
 - **One helper per beginner side, in every chukka**: a "helper" is a player above
@@ -112,12 +138,19 @@ a normal one-off player with a manually-set handicap.
   5. **Helper cap, every chukka**: a chukka with a beginner takes at most two
      helpers (one per side) — −100000 for a third, or for a beginner joining a
      chukka that already has three.
+- **Fallback attempts**: if none of the 15 attempts gets everyone their chukkas,
+  15 more run with `relaxed` set — the helper caps (−100000) become −3000 and the
+  beginner off-block penalty is dropped. Normal days never reach this; it exists
+  for extreme rosters (e.g. a helper wanting every chukka of the day).
+- **`MUST_PLAY` for helpers** counts only half the remaining slow chukkas as
+  available, since slow chukkas take two helpers at most.
 - **Fill guarantee**: each pick is the best-scoring player *whose pick still lets
   the rest of the day fill cleanly* (`canFinishCleanly()`, a Gale–Ryser check
   assuming the rest of the chukka goes to the highest deficits). This keeps "only
   the last chukka can be short" true whatever the bonuses do. On 350 random
-  rosters that can be filled cleanly, both boards fill every request with no short
-  chukka mid-day (the old scheduler left requests unfilled on 64 of 700 boards).
+  rosters that can be filled cleanly, every board (both modes, all three beginner
+  placements: 2,100 boards) fills every request with no short chukka mid-day (the
+  original scheduler left requests unfilled on 64 of 700 boards).
 
 ### Stage 2 — `assignColours()`: splitting each chukka's 8 into Blue/White
 

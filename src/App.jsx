@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Minus, Trash2, Shuffle, AlertTriangle } from 'lucide-react';
-import { generateBoard, CAPACITY, TEAM_SIZE, isBeginner, isImprover } from './scheduler.js';
+import { generateBoard, BEGINNER_PLACEMENTS, CAPACITY, TEAM_SIZE, isBeginner, isImprover } from './scheduler.js';
 
 let idCounter = 1;
 const makePlayer = (name = '', handicap = 0, chukkasWanted = 3, timingPref = 'none', slowChukkas = 0) => ({
@@ -63,6 +63,26 @@ function loadStoredPlayers() {
     return parsed;
   } catch (e) {
     return null;
+  }
+}
+
+// Where the beginners' block goes is remembered separately from the roster.
+const PLACEMENT_KEY = 'chukka-board-beginner-placement-v1';
+
+function loadStoredPlacement() {
+  try {
+    const v = window.localStorage.getItem(PLACEMENT_KEY);
+    return BEGINNER_PLACEMENTS.includes(v) ? v : 'end';
+  } catch (e) {
+    return 'end';
+  }
+}
+
+function saveStoredPlacement(v) {
+  try {
+    window.localStorage.setItem(PLACEMENT_KEY, v);
+  } catch (e) {
+    // storage unavailable — the choice just won't persist
   }
 }
 
@@ -249,6 +269,12 @@ const TIMING_OPTIONS = [
   { value: 'late', label: 'Late' },
 ];
 
+const PLACEMENT_OPTIONS = [
+  { value: 'start', label: 'Start' },
+  { value: 'mixed', label: 'Mixed' },
+  { value: 'end', label: 'End' },
+];
+
 const VIEW_OPTIONS = [
   { value: 'standard', label: 'Standard' },
   { value: 'fast', label: 'Fast' },
@@ -264,6 +290,7 @@ export default function ChukkaBoardApp() {
   const [boards, setBoards] = useState(null);
   const [error, setError] = useState('');
   const [view, setView] = useState('standard');
+  const [placement, setPlacement] = useState(loadStoredPlacement);
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [shareStatus, setShareStatus] = useState('');
   const boardRef = useRef(null);
@@ -271,6 +298,10 @@ export default function ChukkaBoardApp() {
   useEffect(() => {
     saveStoredPlayers(players);
   }, [players]);
+
+  useEffect(() => {
+    saveStoredPlacement(placement);
+  }, [placement]);
 
   const selectSuggestion = (p, match) => {
     setPlayers((ps) => ps.map((pp) => (pp.id === p.id ? { ...pp, name: match.name, handicap: match.handicap } : pp)));
@@ -314,14 +345,15 @@ export default function ChukkaBoardApp() {
   const computedChukkas = totalRequestedNow > 0 ? Math.ceil(totalRequestedNow / CAPACITY) : 0;
 
   function generate() {
-    const standard = generateBoard(players, 'standard');
+    const options = { beginnerPlacement: placement };
+    const standard = generateBoard(players, 'standard', options);
     if (standard.error) {
       setBoards(null);
       setError(standard.error);
       return;
     }
     setError('');
-    setBoards({ standard, fast: generateBoard(players, 'fast') });
+    setBoards({ standard, fast: generateBoard(players, 'fast', options) });
   }
 
   const fastAvailable = boards ? boards.fast.board.plannedFast > 0 : false;
@@ -379,6 +411,10 @@ export default function ChukkaBoardApp() {
         <section className="flex flex-wrap gap-6 items-end mb-6">
           <div className="text-sm text-emerald-400 pb-2">{CAPACITY} players per chukka ({TEAM_SIZE} a side)</div>
           <div className="text-sm text-amber-400 pb-2 font-mono">Chukkas needed: {computedChukkas || '—'}</div>
+          <div className="flex items-center gap-2 pb-2">
+            <span className="text-xs text-emerald-500 uppercase tracking-wide">Beginners</span>
+            <Segmented value={placement} onChange={setPlacement} options={PLACEMENT_OPTIONS} />
+          </div>
           <div className="flex-1" />
           <button onClick={loadSample} className="text-xs text-emerald-400 hover:text-emerald-200 underline underline-offset-2">
             Load sample roster
