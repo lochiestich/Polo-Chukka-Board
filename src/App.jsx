@@ -368,7 +368,24 @@ export default function ChukkaBoardApp() {
     try {
       // Bundled, but split into its own chunk so it only downloads the first time someone shares.
       const { default: html2canvas } = await import('html2canvas');
-      const canvas = await html2canvas(boardRef.current, { backgroundColor: '#fafaf9', scale: 2 });
+      // The board scrolls sideways on a phone, and html2canvas only draws what's
+      // visible. Capture the full width instead, by unclipping the board in the
+      // copy html2canvas renders from (the page itself doesn't change).
+      const fullWidth = boardRef.current.scrollWidth;
+      const canvas = await html2canvas(boardRef.current, {
+        backgroundColor: '#fafaf9',
+        scale: 2,
+        width: fullWidth,
+        windowWidth: Math.max(window.innerWidth, fullWidth),
+        scrollX: 0,
+        onclone: (doc) => {
+          const el = doc.querySelector('[data-share-board]');
+          if (el) {
+            el.style.overflow = 'visible';
+            el.style.width = `${fullWidth}px`;
+          }
+        },
+      });
       const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
       if (!blob) throw new Error('Could not create image');
       const file = new File([blob], 'chukka-board.png', { type: 'image/png' });
@@ -574,7 +591,7 @@ export default function ChukkaBoardApp() {
                 </p>
               )}
               {shareStatus && <p className="text-xs text-amber-400 mb-3">{shareStatus}</p>}
-              <div ref={boardRef} className="overflow-x-auto bg-stone-50 rounded-lg border-2 border-emerald-800">
+              <div ref={boardRef} data-share-board className="overflow-x-auto bg-stone-50 rounded-lg border-2 border-emerald-800">
                 <table className="w-full border-collapse text-sm">
                   <thead>
                     <tr>
