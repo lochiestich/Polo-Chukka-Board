@@ -36,6 +36,12 @@ export function slowNeedOf(p) {
   return asked;
 }
 
+// Every side in every chukka has at least one player above 0 (0.5s count),
+// and no side totals below -5.5 — no "-6 goal" teams.
+export const SIDE_FLOOR = -5.5;
+const MIN_POSITIVES = 2; // per chukka: one above-0 player for each side
+const isPositive = (p) => hcap(p) > 0;
+
 // A helper is a player above 0 on the same side as a beginner. Each beginner's
 // side gets at most one — in every chukka, not just slow ones. Players who
 // asked for slow chukkas don't count, so they can join beginner chukkas even
@@ -134,10 +140,21 @@ function evenIndices(count, total) {
 // 1-goal-and-up players asked for, capped at half the day. On the club's own
 // boards this matches what was planned by hand (e.g. 34 slots → 4 fast).
 // Never so many that a -1.5 or -2 can't fit all their chukkas into the rest.
+// Also never so many that the other chukkas run out of above-0 players
+// (a fast chukka uses about six; every other chukka needs two).
 export function plannedFastCount(valid, numChukkas) {
   const highSlots = valid.filter((p) => hcap(p) >= 1).reduce((s, p) => s + wantedOf(p), 0);
+  const positiveSlots = valid.filter(isPositive).reduce((s, p) => s + wantedOf(p), 0);
   const mostWantedByNeverFast = valid.filter(neverFast).reduce((m, p) => Math.max(m, wantedOf(p)), 0);
-  return Math.max(0, Math.min(Math.floor(highSlots / CAPACITY), Math.floor(numChukkas / 2), numChukkas - mostWantedByNeverFast));
+  return Math.max(
+    0,
+    Math.min(
+      Math.floor(highSlots / CAPACITY),
+      Math.floor(numChukkas / 2),
+      numChukkas - mostWantedByNeverFast,
+      Math.floor((positiveSlots - MIN_POSITIVES * numChukkas) / (6 - MIN_POSITIVES))
+    )
+  );
 }
 
 // Label `count` chukkas, two at a time as back-to-back pairs, trying the
@@ -286,6 +303,10 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
     for (let slot = 0; slot < capacity; slot++) {
       const beginnersIn = c.players.filter(isBeginner).length;
       const helpersIn = c.players.filter(countsAsHelper).length;
+      // Once the chukka's remaining spots are only just enough for the
+      // above-0 players it still needs (one per side), only they can have them.
+      const positivesNeeded = Math.max(0, MIN_POSITIVES - c.players.filter(isPositive).length);
+      const mustTakePositive = positivesNeeded > 0 && positivesNeeded >= capacity - c.players.length;
       const avgSoFar = c.players.length > 0 ? c.players.reduce((s, cp) => s + hcap(cp), 0) / c.players.length : 0;
       const scored = [];
       valid.forEach((p) => {
@@ -357,6 +378,7 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
         // beginner in it takes at most two helpers (one each side).
         if (countsAsHelper(p) && beginnersIn >= 1 && helpersIn >= 2) score -= HELPER_CAP;
         if (isBeginner(p) && helpersIn >= 3) score -= HELPER_CAP;
+        if (mustTakePositive && !isPositive(p)) score -= HELPER_CAP;
 
         score += jitter ? Math.random() * FILL_JITTER : 0;
         scored.push({ p, score });
@@ -421,33 +443,35 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
 // comment in assignColours for why the gap cap must come first). Shared by
 // assignColours and the repair pass so the two can never disagree. "Helpers"
 // are counted with countsAsHelper().
-function balancePenalties(sumBlue, sumWhite, blueBeginners, whiteBeginners, blueHelpers, whiteHelpers) {
+function balancePenalties(sumBlue, sumWhite, blueBeginners, whiteBeginners, blueHelpers, whiteHelpers, bluePositives, whitePositives) {
   const diff = Math.abs(sumBlue - sumWhite);
   const hasBeginner = blueBeginners > 0 || whiteBeginners > 0;
   return {
     diff,
     diffCapPenalty: Math.max(0, diff - (hasBeginner ? 3 : 2)),
+    noPositivePenalty: (bluePositives === 0 ? 1 : 0) + (whitePositives === 0 ? 1 : 0),
+    weakTeamPenalty: Math.max(0, SIDE_FLOOR - sumBlue) + Math.max(0, SIDE_FLOOR - sumWhite),
     hardCapPenalty:
       (blueBeginners > 0 && sumBlue > 2.5 ? sumBlue - 2.5 : 0) + (whiteBeginners > 0 && sumWhite > 2.5 ? sumWhite - 2.5 : 0),
-    weakTeamPenalty:
-      (blueBeginners > 0 && sumBlue < -6 ? -6 - sumBlue : 0) + (whiteBeginners > 0 && sumWhite < -6 ? -6 - sumWhite : 0),
     beginnerPenalty:
       (blueBeginners > 0 ? Math.max(0, blueHelpers - 1) : 0) + (whiteBeginners > 0 ? Math.max(0, whiteHelpers - 1) : 0),
   };
 }
 
 // The best balance a chukka's roster could possibly get from any split,
-// ignoring shirt-colour history: [gap cap, beginner-side 2.5 cap, beginner-side
-// -6 floor, one helper per beginner side]. All zeros means fully compliant.
+// ignoring shirt-colour history: [gap cap, someone above 0 each side, -5.5
+// side floor, beginner-side 2.5 cap, one helper per beginner side]. All zeros
+// means fully compliant.
 function rosterBalanceKey(roster) {
   const total = roster.length;
-  if (total < 2) return [0, 0, 0, 0];
+  if (total < 2) return [0, 0, 0, 0, 0];
   const hs = roster.map(hcap);
   const beg = roster.map(isBeginner);
   const helper = roster.map(countsAsHelper);
   let best = null;
   for (const comboIdx of cachedCombinations(total, Math.ceil(total / 2))) {
     let sumBlue = 0, sumWhite = 0, blueBeginners = 0, whiteBeginners = 0, blueHelpers = 0, whiteHelpers = 0;
+    let bluePositives = 0, whitePositives = 0;
     let ci = 0;
     for (let i = 0; i < total; i++) {
       const inBlue = comboIdx[ci] === i;
@@ -456,14 +480,16 @@ function rosterBalanceKey(roster) {
         sumBlue += hs[i];
         if (beg[i]) blueBeginners++;
         if (helper[i]) blueHelpers++;
+        if (hs[i] > 0) bluePositives++;
       } else {
         sumWhite += hs[i];
         if (beg[i]) whiteBeginners++;
         if (helper[i]) whiteHelpers++;
+        if (hs[i] > 0) whitePositives++;
       }
     }
-    const pen = balancePenalties(sumBlue, sumWhite, blueBeginners, whiteBeginners, blueHelpers, whiteHelpers);
-    const key = [pen.diffCapPenalty, pen.hardCapPenalty, pen.weakTeamPenalty, pen.beginnerPenalty];
+    const pen = balancePenalties(sumBlue, sumWhite, blueBeginners, whiteBeginners, blueHelpers, whiteHelpers, bluePositives, whitePositives);
+    const key = [pen.diffCapPenalty, pen.noPositivePenalty, pen.weakTeamPenalty, pen.hardCapPenalty, pen.beginnerPenalty];
     if (!best || compareKeys(key, best) < 0) best = key;
     if (best.every((k) => k <= 1e-9)) break;
   }
@@ -613,6 +639,8 @@ export function assignColours(chukkas, valid) {
       let blueHelpers = 0;
       let whiteBeginners = 0;
       let whiteHelpers = 0;
+      let bluePositives = 0;
+      let whitePositives = 0;
       const pairSeen = {};
       roster.forEach((p, i) => {
         const inBlue = blueSet.has(i);
@@ -626,6 +654,10 @@ export function assignColours(chukkas, valid) {
         if (countsAsHelper(p)) {
           if (inBlue) blueHelpers++;
           else whiteHelpers++;
+        }
+        if (h > 0) {
+          if (inBlue) bluePositives++;
+          else whitePositives++;
         }
         const prev = history[p.id].colour;
         if (prev) {
@@ -648,23 +680,35 @@ export function assignColours(chukkas, valid) {
       // stack helpers", which let a split with an enormous gap look
       // "compliant" purely by exempting the other side from any beginner
       // rule at all. Only among splits that already keep the gap in check
-      // do the finer beginner protections get to break ties: never exceed a
-      // 2.5 total on a beginner's side; a beginner's side can't drop below
-      // -6; at most one helper on a beginner's side; try not to push anyone
+      // do the other rules get to break ties: someone above 0 on each side;
+      // no side below -5.5; never exceed a 2.5 total on a beginner's side;
+      // at most one helper on a beginner's side; try not to push anyone
       // past 3 shirt changes for the day (a soft preference — an uneven team
       // is worse than an extra shirt change); prefer keeping colours the same
       // generally; minimise the handicap gap further; avoid stacking
       // strong/weak pairs together. Each entry is compared in turn — only
       // moving to the next one if the current one is tied.
-      const { diffCapPenalty, hardCapPenalty, weakTeamPenalty, beginnerPenalty } = balancePenalties(
+      const { diffCapPenalty, noPositivePenalty, weakTeamPenalty, hardCapPenalty, beginnerPenalty } = balancePenalties(
         sumBlue,
         sumWhite,
         blueBeginners,
         whiteBeginners,
         blueHelpers,
-        whiteHelpers
+        whiteHelpers,
+        bluePositives,
+        whitePositives
       );
-      const key = [diffCapPenalty, hardCapPenalty, weakTeamPenalty, beginnerPenalty, changeCapPenalty, changeCost, diff, pairPenalty];
+      const key = [
+        diffCapPenalty,
+        noPositivePenalty,
+        weakTeamPenalty,
+        hardCapPenalty,
+        beginnerPenalty,
+        changeCapPenalty,
+        changeCost,
+        diff,
+        pairPenalty,
+      ];
       if (!best || compareKeys(key, best.key) < 0) best = { key, diff, blueSet };
     });
 
@@ -759,9 +803,20 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
       const hasBeginner = c.players.some(isBeginner);
       return s + Math.max(0, Math.abs(teamTotal(c.blue) - teamTotal(c.white)) - (hasBeginner ? 3 : 2));
     }, 0);
+    // Sides with nobody above 0, plus goals below the -5.5 side floor.
+    const sideBreaches = chukkas.reduce(
+      (s, c) =>
+        s +
+        [c.blue, c.white].reduce(
+          (t, side) => t + (side.length > 0 && !side.some(isPositive) ? 1 : 0) + Math.max(0, SIDE_FLOOR - teamTotal(side)),
+          0
+        ),
+      0
+    );
     const score =
       unmet * 100000 +
       gapBreaches * 3000 +
+      sideBreaches * 3000 +
       tooFast * 2000 +
       violations.length * 1500 +
       capBreaches * 1000 +
@@ -808,6 +863,19 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
     if (gap > gapCap) {
       warn.push(`Chukka ${c.index + 1}: handicap gap is ${gap}, couldn't get it under ${gapCap} given who's in that chukka.`);
     }
+    // (A leftover tail chukka of one to three players isn't a real game — the
+    // "only has N of 8 spots" note above already covers it.)
+    if (c.players.length >= 4) [
+      ['Blue', c.blue],
+      ['White', c.white],
+    ].forEach(([colour, side]) => {
+      if (side.length > 0 && !side.some(isPositive)) {
+        warn.push(`Chukka ${c.index + 1}: ${colour} has nobody above 0 — not enough higher-goal chukkas to go round.`);
+      }
+      if (teamTotal(side) < SIDE_FLOOR) {
+        warn.push(`Chukka ${c.index + 1}: ${colour} totals ${teamTotal(side)}, below the ${SIDE_FLOOR} floor.`);
+      }
+    });
     if (c.displayPace === 'fast') {
       c.players.filter(neverFast).forEach((p) => {
         warn.push(`${p.name} (${p.handicap}) is in fast Chukka ${c.index + 1} — couldn't keep them out given who's playing.`);

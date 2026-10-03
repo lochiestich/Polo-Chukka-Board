@@ -14,7 +14,7 @@ const sum = (side) => side.reduce((s, p) => s + h(p), 0);
 const failures = [];
 
 function measure(name, board) {
-  const m = { gap: 0, side: 0, tooFast: 0, timing: board.violations.length, unmet: board.unmet, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0 };
+  const m = { gap: 0, noPos: 0, floor: 0, side: 0, tooFast: 0, timing: board.violations.length, unmet: board.unmet, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0 };
   const last = Math.max(1, board.chukkas.length - 1);
   board.chukkas.forEach((c, i) => {
     // structural invariants
@@ -27,9 +27,11 @@ function measure(name, board) {
     const hasB = c.players.some(isBeginner);
     m.gap += Math.max(0, Math.abs(sum(c.blue) - sum(c.white)) - (hasB ? 3 : 2));
     [c.blue, c.white].forEach((side) => {
+      if (c.players.length >= 4 && !side.some((p) => h(p) > 0)) m.noPos++;
+      m.floor += Math.max(0, -5.5 - sum(side));
       if (!side.some(isBeginner)) return;
       const t = sum(side);
-      m.side += Math.max(0, t - 2.5) + Math.max(0, -6 - t) + Math.max(0, side.filter(countsAsHelper).length - 1);
+      m.side += Math.max(0, t - 2.5) + Math.max(0, side.filter(countsAsHelper).length - 1);
     });
     if (c.displayPace === 'fast') {
       m.fast++;
@@ -55,11 +57,11 @@ function measure(name, board) {
   return m;
 }
 
-const cols = ['unmet', 'gap', 'side', 'tooFast', 'timing', 'fast', 'pairs%', 'block%', 'begRun%', 'begPos', 'shirts', 'ms'];
+const cols = ['unmet', 'gap', 'noPos', 'floor', 'side', 'tooFast', 'timing', 'fast', 'pairs%', 'block%', 'begRun%', 'begPos', 'shirts', 'ms'];
 console.log('roster'.padEnd(24) + 'mode'.padEnd(9) + 'beg'.padEnd(7) + cols.map((c) => c.padStart(8)).join(''));
 for (const [rname, roster] of Object.entries(ROSTERS)) {
   for (const placement of PLACEMENTS) for (const mode of MODES) {
-    const tot = { unmet: 0, gap: 0, side: 0, tooFast: 0, timing: 0, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0, ms: 0 };
+    const tot = { unmet: 0, gap: 0, noPos: 0, floor: 0, side: 0, tooFast: 0, timing: 0, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0, ms: 0 };
     for (let r = 0; r < RUNS; r++) {
       const t0 = performance.now();
       const { board, error } = generateBoard(roster, mode, { beginnerPlacement: placement });
@@ -69,7 +71,7 @@ for (const [rname, roster] of Object.entries(ROSTERS)) {
       for (const k of Object.keys(m)) tot[k] += m[k];
     }
     const avg = (k) => (tot[k] / RUNS).toFixed(1);
-    const row = [avg('unmet'), avg('gap'), avg('side'), avg('tooFast'), avg('timing'), avg('fast'),
+    const row = [avg('unmet'), avg('gap'), avg('noPos'), avg('floor'), avg('side'), avg('tooFast'), avg('timing'), avg('fast'),
       ((100 * tot.pairs) / tot.slots).toFixed(0),
       tot.begSlots ? ((100 * tot.begBlock) / tot.begSlots).toFixed(0) : '-',
       tot.begSlots ? ((100 * tot.begRun) / tot.begSlots).toFixed(0) : '-',
@@ -78,7 +80,7 @@ for (const [rname, roster] of Object.entries(ROSTERS)) {
     console.log(rname.padEnd(24) + mode.padEnd(9) + placement.padEnd(7) + row.map((c) => String(c).padStart(8)).join(''));
   }
 }
-console.log('\nPer-board averages over', RUNS, 'runs. gap/side = rule excess; tooFast = -1.5/-2 slots in fast chukkas;');
+console.log('\nPer-board averages over', RUNS, 'runs. noPos = sides with nobody above 0; floor = goals below -5.5 a side; gap/side = rule excess; tooFast = -1.5/-2 slots in fast chukkas;');
 console.log('timing = early/late misses; fast = fast chukkas; pairs% = slots played back-to-back;\nblock% = beginner slots in a chukka with 3+ beginners (club boards: ~85%); begRun% = beginner slots next to another of their own;\nbegPos = where beginners play, 0 = start of day, 1 = end.');
 if (failures.length) {
   console.error('\nFAILED:\n' + [...new Set(failures)].join('\n'));
