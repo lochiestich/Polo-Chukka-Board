@@ -78,6 +78,33 @@ function loadStoredPlacement() {
   }
 }
 
+// How many top chukkas (top players only) to plan; remembered like the placement.
+const TOP_KEY = 'chukka-board-top-chukkas-v1';
+const TOP_OPTIONS = [
+  { value: 0, label: 'Off' },
+  { value: 1, label: '1' },
+  { value: 2, label: '2' },
+  { value: 3, label: '3' },
+];
+
+function loadStoredTop() {
+  try {
+    const raw = window.localStorage.getItem(TOP_KEY);
+    const v = Number(raw);
+    return raw !== null && TOP_OPTIONS.some((o) => o.value === v) ? v : 2;
+  } catch (e) {
+    return 2;
+  }
+}
+
+function saveStoredTop(v) {
+  try {
+    window.localStorage.setItem(TOP_KEY, String(v));
+  } catch (e) {
+    // storage unavailable — the choice just won't persist
+  }
+}
+
 function saveStoredPlacement(v) {
   try {
     window.localStorage.setItem(PLACEMENT_KEY, v);
@@ -291,6 +318,7 @@ export default function ChukkaBoardApp() {
   const [error, setError] = useState('');
   const [view, setView] = useState('standard');
   const [placement, setPlacement] = useState(loadStoredPlacement);
+  const [topChukkas, setTopChukkas] = useState(loadStoredTop);
   const [openDropdownId, setOpenDropdownId] = useState(null);
   const [shareStatus, setShareStatus] = useState('');
   const boardRef = useRef(null);
@@ -302,6 +330,10 @@ export default function ChukkaBoardApp() {
   useEffect(() => {
     saveStoredPlacement(placement);
   }, [placement]);
+
+  useEffect(() => {
+    saveStoredTop(topChukkas);
+  }, [topChukkas]);
 
   const selectSuggestion = (p, match) => {
     setPlayers((ps) => ps.map((pp) => (pp.id === p.id ? { ...pp, name: match.name, handicap: match.handicap } : pp)));
@@ -345,7 +377,7 @@ export default function ChukkaBoardApp() {
   const computedChukkas = totalRequestedNow > 0 ? Math.ceil(totalRequestedNow / CAPACITY) : 0;
 
   function generate() {
-    const options = { beginnerPlacement: placement };
+    const options = { beginnerPlacement: placement, topChukkas };
     const standard = generateBoard(players, 'standard', options);
     if (standard.error) {
       setBoards(null);
@@ -431,6 +463,10 @@ export default function ChukkaBoardApp() {
           <div className="flex items-center gap-2 pb-2">
             <span className="text-xs text-emerald-500 uppercase tracking-wide">Beginners</span>
             <Segmented value={placement} onChange={setPlacement} options={PLACEMENT_OPTIONS} />
+          </div>
+          <div className="flex items-center gap-2 pb-2">
+            <span className="text-xs text-emerald-500 uppercase tracking-wide">Top chukkas</span>
+            <Segmented value={topChukkas} onChange={setTopChukkas} options={TOP_OPTIONS} />
           </div>
           <div className="flex-1" />
           <button onClick={loadSample} className="text-xs text-emerald-400 hover:text-emerald-200 underline underline-offset-2">
@@ -585,6 +621,12 @@ export default function ChukkaBoardApp() {
                   No Fast board today — not enough 1-goal-and-up players to make up a fast chukka.
                 </p>
               )}
+              {board.plannedTop > 0 && (
+                <p className="text-xs text-emerald-400 mb-3">
+                  ★ {board.plannedTop === 1 ? 'Top chukka' : `${board.plannedTop} top chukkas`}: just for the day's top players, so they
+                  get a fast game too.
+                </p>
+              )}
               {activeView === 'fast' && (
                 <p className="text-xs text-emerald-400 mb-3">
                   Fast board: {board.plannedFast} chukka{board.plannedFast === 1 ? '' : 's'} planned fast for the higher-goal players.
@@ -599,6 +641,7 @@ export default function ChukkaBoardApp() {
                       {board.chukkas.map((c) => (
                         <th key={c.index} className="bg-emerald-800 text-emerald-50 text-xs font-mono px-2 py-2 text-center min-w-12 border border-emerald-700">
                           <div className="text-amber-400 font-bold" title={PACE_NAME[c.displayPace]}>
+                            {c.pace === 'top' && <span title="Top players' chukka">★</span>}
                             {PACE_LETTER[c.displayPace]}
                           </div>
                           {c.index + 1}
