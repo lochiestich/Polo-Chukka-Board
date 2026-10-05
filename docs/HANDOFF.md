@@ -77,18 +77,20 @@ at 0.85 of the way through the day (the club's board: chukkas 10–13 of 13), an
   next to the block as a lead-in (`BEGINNER_LEAD_IN`).
 - **0.5s count as helpers** (anything above 0), confirmed by the club.
 - **Top chukkas** (Top chukkas: Off / 1 / 2 / 3 setting, default 2): a block of
-  chukkas just for the day's top group — the top 10 by handicap, ties with the
-  10th included, never -1.5s or -2s — so the better players get a fast game too.
-  From the club's Sun 9.30 board, where chukkas 14–16 each had 8 of the top 10.
-  The block goes at the opposite end of the day from the beginners (and before a
-  short leftover last chukka). Only on days with 16+ players; capped at a third
-  of the day, at what the group's chukka requests can fill, and so that everyone
-  outside the group can still fit their chukkas. Shown as ★ on the board.
-  Mechanics: `TOP_PULL` pulls group members in (more for those who haven't had
-  one yet, so all of the group get a turn), outsiders get the helper-cap penalty,
-  members save chukkas for the block (`TOP_RESERVE`), the fill's look-ahead
-  also checks the group can still fill the top chukkas to come, and the repair
-  pass never swaps an outsider in.
+  chukkas aimed at the day's top group — the top 12 by handicap, ties with the
+  12th included, never -1.5s or -2s — so the better players get a fast game too.
+  From the club's Sun 9.30 board, where chukkas 14–16 were all top players.
+  **A nice-to-have, not a rule** (the club's words): anyone else can fill in
+  when that suits the day better, and nothing warns about it; only -1.5s and
+  -2s stay firmly out. The block goes at the opposite end of the day from the
+  beginners (and before a short leftover last chukka). Only on days with 16+
+  players; capped at a third of the day, at what the group's chukka requests
+  can fill, and so that everyone outside the group can fit their chukkas into
+  the rest. Shown as ★ on the board. Mechanics, all soft: `TOP_PULL` (3000)
+  pulls group members in, more for those who haven't had one yet so all of the
+  group get a turn; `TOP_OUTSIDER` (2500) nudges others out; `TOP_RESERVE`
+  (2000) nudges members to save a chukka for the block; the fill's look-ahead
+  prefers picks that leave the group able to fill the top chukkas to come.
 - **Someone above 0 on every side, in every chukka**, and **no side below -5.5**
   (`SIDE_FLOOR`; no "-6 goal" teams). Both rank straight after the gap cap. The
   fill makes sure each chukka gets two above-0 players; the Fast board never plans
@@ -130,9 +132,8 @@ a normal one-off player with a manually-set handicap.
 - **Per-slot selection** is a greedy score (highest wins), roughly in this order of
   influence:
   0. **`MUST_PLAY`** (+200000) — anyone who needs every remaining chukka they're
-     allowed in (no fast ones for -1.5s/-2s, no top ones outside the top group,
-     half the slow ones for helpers) gets in — but never into a chukka they're
-     not allowed in. This outranks every rule
+     allowed in (no fast or top ones for -1.5s/-2s, half the slow ones for
+     helpers) gets in — but never into a chukka they're not allowed in. This outranks every rule
      below, so nobody is left short to protect a softer rule.
   1. **Deficit** (`chukkasWanted - alreadyAssigned`, ×1000) — this is what
      actually makes the pour-fill pour.
@@ -245,7 +246,8 @@ unmet×100000 + gapBreaches×3000 + sideBreaches×3000 + tooFast×2000 + violati
 the whole day; `tooFast` = -1.5/-2 player-slots in chukkas that play fast;
 `violations` = timing-preference misses, recomputed after repair; `fastMiss` =
 planned-fast chukkas that didn't play fast (Fast board only); `topMiss` =
-players in a top chukka from outside the top group; `unmet` = requested
+players in a top chukka from outside the top group (lightly weighted — it's a
+nice-to-have); `unmet` = requested
 chukkas that couldn't be placed anywhere.)
 
 ### Two boards: Standard and Fast

@@ -623,8 +623,8 @@ export default function ChukkaBoardApp() {
               )}
               {board.plannedTop > 0 && (
                 <p className="text-xs text-emerald-400 mb-3">
-                  ★ {board.plannedTop === 1 ? 'Top chukka' : `${board.plannedTop} top chukkas`}: just for the day's top players, so they
-                  get a fast game too.
+                  ★ {board.plannedTop === 1 ? 'Top chukka' : `${board.plannedTop} top chukkas`}: aimed at the day's top 12 players, so
+                  they get a fast game too — others fill in where that suits the day better.
                 </p>
               )}
               {activeView === 'fast' && (

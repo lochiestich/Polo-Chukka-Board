@@ -16,7 +16,7 @@ const failures = [];
 function measure(name, board) {
   const m = { top8: 0, topReach: 0, gap: 0, noPos: 0, floor: 0, side: 0, tooFast: 0, timing: board.violations.length, unmet: board.unmet, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0 };
   const last = Math.max(1, board.chukkas.length - 1);
-  // The day's top group (top 10 by handicap, ties included, never -1.5s or
+  // The day's top group (top 12 by handicap, ties included, never -1.5s or
   // -2s): how many full chukkas are all top group, and how many of the group
   // got at least one.
   const top10 = topGroup(board.valid);
@@ -93,7 +93,7 @@ for (const [rname, roster] of Object.entries(ROSTERS)) {
     console.log(rname.padEnd(24) + mode.padEnd(9) + placement.padEnd(7) + row.map((c) => String(c).padStart(8)).join(''));
   }
 }
-console.log('\nPer-board averages over', RUNS, 'runs. top8 = chukkas of 8 top-group players; reach = how many of the top group got one; noPos = sides with nobody above 0; floor = goals below -5.5 a side; gap/side = rule excess; tooFast = -1.5/-2 slots in fast chukkas;');
+console.log('\nPer-board averages over', RUNS, 'runs. top8 = chukkas of 8 top-group (top 12) players; reach = how many of the top group got one; noPos = sides with nobody above 0; floor = goals below -5.5 a side; gap/side = rule excess; tooFast = -1.5/-2 slots in fast chukkas;');
 console.log('timing = early/late misses; fast = fast chukkas; pairs% = slots played back-to-back;\nblock% = beginner slots in a chukka with 3+ beginners (club boards: ~85%); begRun% = beginner slots next to another of their own;\nbegPos = where beginners play, 0 = start of day, 1 = end.');
 if (failures.length) {
   console.error('\nFAILED:\n' + [...new Set(failures)].join('\n'));
