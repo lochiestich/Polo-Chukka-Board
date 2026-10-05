@@ -75,7 +75,11 @@ at 0.85 of the way through the day (the club's board: chukkas 10–13 of 13), an
   into the block (`BEGINNER_PULL`, up to four per chukka, six at most), a slow
   chukka takes two helpers at most, and a beginner's medium chukka sits right
   next to the block as a lead-in (`BEGINNER_LEAD_IN`).
-- **0.5s count as helpers** (anything above 0), confirmed by the club.
+- **0.5s count as helpers** (anything above 0), confirmed by the club — but a
+  1.5-and-up **anchor** on each beginner side is preferred where there's one to
+  spare (`ANCHOR_PULL`, a soft pull for 1.5+ helpers into beginner and slow
+  chukkas while they still need their two helpers). Beginner sides with a 1.5+
+  anchor went from 54% to 66% on the club rosters.
 - **Top chukkas** (Top chukkas: Off / 1 / 2 / 3 setting, default 2): a block of
   chukkas aimed at the day's top group — the top 12 by handicap, ties with the
   12th included, never -1.5s or -2s — so the better players get a fast game too.
@@ -189,13 +193,20 @@ order, **highest first**:
 4. **`hardCapPenalty`** — a side with a beginner can't total more than 2.5.
 5. **`beginnerPenalty`** — a side with a beginner gets at most one helper
    (`countsAsHelper()`: above 0 and not a slow-requester).
-6. **`changeCapPenalty`** — soft cap of 3 shirt-colour changes per player, for the
-   whole day.
-7. **`changeCost`** — general preference to keep the same colour as last time.
-8. **`diff`** — fine-grained minimisation of the handicap gap, below the cap.
-9. **`pairPenalty`** — the chukka's 8 players are ranked by handicap and paired up
-   (closest-ranked together); prefer splits where each pair ends up on opposite
-   sides, so a tied sum doesn't still produce "2 strong + 2 weak" vs "4 mediums".
+6. **Gap over 1.5** — only as a last resort.
+7. **`changeCapPenalty`** — soft cap of 3 *mid-run* shirt changes per player.
+8. **`changeCost`** — keep the same colour within a run of back-to-back
+   chukkas. Switching between runs is free (the club's rule: teams can change
+   between blocks, never within one).
+9. **Gap over 1** — 1 is acceptable, more isn't.
+10. **`pairPenalty`** — "opposite numbers": rank the chukka's 8 by handicap and
+    put each pair (1-2, 3-4, 5-6, 7-8) on opposite sides. This is the snake
+    split the club's boards use, and it puts the two best on opposite teams.
+11. **`diff`** — the smallest gap, target 0.5.
+
+Measured on the club rosters (530 full chukkas): gaps over 1.5 went from 15%
+to 3%, gaps of 0.5 or less from 55% to 69%, opposite numbers from 56% to 72%,
+mid-run shirt changes from 6% to 2% of back-to-back slots.
 
 ### Stage 1b — `repairChukkas()`: swap players between chukkas
 
@@ -264,8 +275,11 @@ more on days where the strong players would otherwise be spread out.
 ## Display pace (cosmetic only)
 
 After scheduling, each chukka gets a `displayPace` (`'fast'`/`'slow'`/`'neutral'`)
-computed from the *actual resulting* average team handicap (>2 → fast, <0 → slow),
-shown as **F / M / S** above each chukka number like the club's sheets. It feeds
+computed from the *actual resulting* average team total, using the club's own
+cut-offs read off its boards: **fast at 3.5 and up** (about +1 a player),
+**slow at -2 and down** (about -0.5 a player), medium in between
+(`FAST_TEAM_TOTAL`, `SLOW_TEAM_TOTAL`). The fill's "this medium chukka is
+turning fast" check uses the same fast line. Shown as **F / M / S** above each chukka number like the club's sheets. It feeds
 the outer score (`tooFast`, `fastMiss`, `paceMismatch`) but not the fill. Don't
 confuse it with the internal `pace` field from `buildPaceLabels()` — the plan,
 which can say `'fast'` only on the Fast board.

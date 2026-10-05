@@ -283,6 +283,9 @@ const FAST_PULL = 300;
 const TOP_PULL = 3000;
 const TOP_OUTSIDER = 2500;
 const TOP_RESERVE = 2000;
+// Preference for 1.5-and-up "anchors" as the helpers in beginner and slow chukkas.
+const ANCHOR_MIN = 1.5;
+const ANCHOR_PULL = 3000;
 // Pull for a beginner who still needs slow chukkas into a slow chukka, until it
 // has four beginners. Beats a few chukkas of deficit, so the beginners' block
 // really is the beginners' block rather than whoever has most chukkas left.
@@ -411,6 +414,12 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
 
         if (lastPlayed[p.id] === c.index - 1 && streak[p.id] === 1) score += PAIR_BONUS;
 
+        // A beginner or slow chukka's helpers are preferably 1.5 or above (an
+        // "anchor" each side) — preferred, not required; anyone above 0 will do.
+        if ((c.pace === 'slow' || beginnersIn > 0) && helpersIn < 2 && h >= ANCHOR_MIN && countsAsHelper(p)) {
+          score += ANCHOR_PULL;
+        }
+
         // A top-group player doesn't spend, in any chukka before the top block,
         // the chukkas they're saving for it.
         if (c.pace !== 'top' && canPlayTop(p) && topFrom[c.index] > 0 && deficit <= Math.min(topReserve, topFrom[c.index])) {
@@ -446,11 +455,11 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
           // More than two beginners turns a medium chukka slow — beginners'
           // medium chukkas should actually play medium.
           score -= 1500;
-        } else if (c.players.length > 0 && avgSoFar > 0.5) {
+        } else if (c.players.length > 0 && avgSoFar > FAST_PLAYER_AVG) {
           // A medium chukka shaping up to be fast: keep slow-requesters out
           // where possible, and -1.5s and -2s out much more firmly.
-          if (n.slow > 0) score -= (avgSoFar - 0.5) * 15;
-          if (neverFast(p)) score -= (avgSoFar - 0.5) * 2000;
+          if (n.slow > 0) score -= (avgSoFar - FAST_PLAYER_AVG) * 15;
+          if (neverFast(p)) score -= (avgSoFar - FAST_PLAYER_AVG) * 2000;
         }
 
         // One helper per beginner side, in every chukka: a chukka with a
@@ -707,7 +716,7 @@ export function repairChukkas(chukkas, valid, numChukkas, actualPace) {
 export function assignColours(chukkas, valid) {
   const history = {};
   valid.forEach((p) => {
-    history[p.id] = { colour: null, streak: 0, changes: 0 };
+    history[p.id] = { colour: null, streak: 0, changes: 0, lastIndex: -2 };
   });
   let totalDiff = 0;
 
@@ -758,12 +767,12 @@ export function assignColours(chukkas, valid) {
           if (inBlue) bluePositives++;
           else whitePositives++;
         }
-        const prev = history[p.id].colour;
-        if (prev) {
-          if (inBlue && prev !== 'blue') changeCost++;
-          if (!inBlue && prev !== 'white') changeCost++;
-        }
+        // Shirt colour only has to stay the same within a run of back-to-back
+        // chukkas; switching between runs is fine.
+        const inRun = history[p.id].lastIndex === c.index - 1;
+        const prev = inRun ? history[p.id].colour : null;
         const willChange = prev && ((inBlue && prev !== 'blue') || (!inBlue && prev !== 'white'));
+        if (willChange) changeCost++;
         const prospectiveChanges = history[p.id].changes + (willChange ? 1 : 0);
         changeCapPenalty += Math.max(0, prospectiveChanges - 3);
         const pid = pairOf[p.id];
@@ -781,12 +790,15 @@ export function assignColours(chukkas, valid) {
       // rule at all. Only among splits that already keep the gap in check
       // do the other rules get to break ties: someone above 0 on each side;
       // no side below -5.5; never exceed a 2.5 total on a beginner's side;
-      // at most one helper on a beginner's side; try not to push anyone
-      // past 3 shirt changes for the day (a soft preference — an uneven team
-      // is worse than an extra shirt change); prefer keeping colours the same
-      // generally; minimise the handicap gap further; avoid stacking
-      // strong/weak pairs together. Each entry is compared in turn — only
-      // moving to the next one if the current one is tied.
+      // at most one helper on a beginner's side; a gap over 1.5 only as a
+      // last resort; try not to push anyone past 3 mid-run shirt changes for
+      // the day; keep colours the same within a run of back-to-back chukkas
+      // (switching between runs is fine); a gap of 1 is acceptable, more
+      // isn't; "opposite numbers" — rank the 8 by handicap, and each pair
+      // (1-2, 3-4, 5-6, 7-8) on opposite sides, which also puts the two best
+      // on opposite teams; and finally the smallest gap (target 0.5). Each
+      // entry is compared in turn — only moving to the next one if the
+      // current one is tied.
       const { diffCapPenalty, noPositivePenalty, weakTeamPenalty, hardCapPenalty, beginnerPenalty } = balancePenalties(
         sumBlue,
         sumWhite,
@@ -803,10 +815,12 @@ export function assignColours(chukkas, valid) {
         weakTeamPenalty,
         hardCapPenalty,
         beginnerPenalty,
+        Math.max(0, diff - 1.5),
         changeCapPenalty,
         changeCost,
-        diff,
+        Math.max(0, diff - 1),
         pairPenalty,
+        diff,
       ];
       if (!best || compareKeys(key, best.key) < 0) best = { key, diff, blueSet };
     });
@@ -823,17 +837,19 @@ export function assignColours(chukkas, valid) {
 
     blueList.forEach((p) => {
       const h = history[p.id];
-      const prev = h.colour;
-      h.changes += prev && prev !== 'blue' ? 1 : 0;
-      h.streak = prev === 'blue' ? h.streak + 1 : 1;
+      const inRun = h.lastIndex === c.index - 1;
+      h.changes += inRun && h.colour !== 'blue' ? 1 : 0;
+      h.streak = inRun && h.colour === 'blue' ? h.streak + 1 : 1;
       h.colour = 'blue';
+      h.lastIndex = c.index;
     });
     whiteList.forEach((p) => {
       const h = history[p.id];
-      const prev = h.colour;
-      h.changes += prev && prev !== 'white' ? 1 : 0;
-      h.streak = prev === 'white' ? h.streak + 1 : 1;
+      const inRun = h.lastIndex === c.index - 1;
+      h.changes += inRun && h.colour !== 'white' ? 1 : 0;
+      h.streak = inRun && h.colour === 'white' ? h.streak + 1 : 1;
       h.colour = 'white';
+      h.lastIndex = c.index;
     });
 
     c.blue = blueList;
@@ -845,11 +861,17 @@ export function assignColours(chukkas, valid) {
   return { history, totalDiff, totalChanges };
 }
 
-// Display pace, from the actual average team handicap: over 2 is fast, under
-// 0 is slow, anything else medium ('neutral').
+// Display pace, from the actual average team total (the club's F/M/S, read off
+// its boards): fast from about +1 a player (team total 3.5 and up), slow at
+// about -0.5 a player or below (team total -2 and down), medium in between
+// ('neutral').
+export const FAST_TEAM_TOTAL = 3.5;
+export const SLOW_TEAM_TOTAL = -2;
+const FAST_PLAYER_AVG = FAST_TEAM_TOTAL / TEAM_SIZE;
+
 export function displayPaceOf(roster) {
-  const avgTeamHandicap = roster.reduce((s, p) => s + hcap(p), 0) / 2;
-  return avgTeamHandicap > 2 ? 'fast' : avgTeamHandicap < 0 ? 'slow' : 'neutral';
+  const avgTeamTotal = roster.reduce((s, p) => s + hcap(p), 0) / 2;
+  return avgTeamTotal >= FAST_TEAM_TOTAL ? 'fast' : avgTeamTotal <= SLOW_TEAM_TOTAL ? 'slow' : 'neutral';
 }
 
 // ---------------------------------------------------------------------------
@@ -995,7 +1017,7 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
   Object.entries(best.history).forEach(([id, h]) => {
     if (h.changes > 3) {
       const p = valid.find((pp) => pp.id === Number(id));
-      if (p) warn.push(`${p.name} changed shirts ${h.changes} times — couldn't hold it to 3 given the rest of the day's constraints.`);
+      if (p) warn.push(`${p.name} changed shirts mid-run ${h.changes} times — couldn't hold it to 3 given the rest of the day's constraints.`);
     }
   });
 
