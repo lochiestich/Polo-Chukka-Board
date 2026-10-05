@@ -40,6 +40,15 @@ export const ROSTERS = {
     ['Sam T', -1.5, 5], ['Anton', -2, 2], ['Zako', -2, 4], ['Charlie S', -2, 4], ['Oscar Outram', -2, 3], ['Davis B', -2, 3],
     ['Eli', -2, 2], ['Ato', -1, 4], ['Jamesy', -2, 2],
   ]),
+  // Jack's handicap isn't on this sheet; 1 is from the club's other boards.
+  'Sun 9.30': roster([
+    ['Archie', 4, 6], ['Izzy V', 3, 7], ['Ben SW', 2, 4], ['Rich SW', 2, 3], ['Cheza', 1, 7], ['Stich', 1, 4],
+    ['Lochie', 1, 7], ['Phyps', 0.5, 5], ['Nikki', 0.5, 4], ['Jeremy P', 0.5, 4], ['Pete G', 0, 4], ['Sarah G', -0.5, 2],
+    ['Isaac M', 0, 7], ['Tom M', -0.5, 4], ['Beezie', -0.5, 4], ['Daisy', -0.5, 4], ['Ro S', -0.5, 6], ['Dr Mike', -1, 3],
+    ['Piers', -1, 6], ['Charlotte Mason', -1.5, 3], ['Millie S', -1.5, 5], ['Anton', -2, 3], ['Zako', -2, 4],
+    ['Charlie S', -2, 4], ['Davis B', -2, 3], ['Eli', -2, 2], ['Jamesy', -2, 3], ['Caspar', -2, 4], ['Lippa', -1, 4],
+    ['Jack', 1, 2],
+  ]),
 };
 
 const variant = (base, f) => base.map((p) => ({ ...p, ...f(p) }));
