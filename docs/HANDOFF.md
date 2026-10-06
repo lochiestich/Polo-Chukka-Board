@@ -16,8 +16,8 @@ standalone HTML file on GitHub Pages / installed to an Android home screen as a 
 - **`scripts/rosters.mjs` / `scripts/sanity.mjs`** — real rosters from the club's
   hand-made boards, and `npm run sanity`, which runs them with each beginner placement,
   prints a quality table and fails on structural breaks. CI runs it before deploy.
-- **`legacy/chukka-board-app.html`** — the old hand-compiled standalone build, kept
-  for reference only. Nothing serves it.
+- The old hand-compiled standalone build (`legacy/chukka-board-app.html`) was
+  removed in October 2026; it's still in git history if ever needed.
 
 ## Build and deploy
 

@@ -28,6 +28,3 @@ if a structural rule breaks. CI runs it before every deploy.
 Every push to `main` builds the app and publishes it to GitHub Pages via
 `.github/workflows/deploy.yml`. One-time setup: in the repo's
 **Settings → Pages**, set **Source** to **GitHub Actions**.
-
-`legacy/chukka-board-app.html` is the old hand-compiled build. It's kept for
-reference only; nothing serves it any more.
