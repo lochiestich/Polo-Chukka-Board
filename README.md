@@ -20,7 +20,7 @@ npm run sanity   # run the scheduler over the club's real rosters and check it
 
 The scheduling logic is in `src/scheduler.js`; the UI is in `src/App.jsx`.
 `npm run sanity` runs every roster in `scripts/rosters.mjs` (taken from the
-club's hand-made boards) through both boards, prints a quality table and fails
+club's hand-made boards) through each beginner placement, prints a quality table and fails
 if a structural rule breaks. CI runs it before every deploy.
 
 ## Deployment

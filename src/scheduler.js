@@ -136,27 +136,6 @@ function evenIndices(count, total) {
 // Stage 0: plan each chukka's pace
 // ---------------------------------------------------------------------------
 
-// How many fast chukkas the Fast board plans: one per 8 chukka-slots that
-// 1-goal-and-up players asked for, capped at half the day. On the club's own
-// boards this matches what was planned by hand (e.g. 34 slots → 4 fast).
-// Never so many that a -1.5 or -2 can't fit all their chukkas into the rest.
-// Also never so many that the other chukkas run out of above-0 players
-// (a fast chukka uses about six; every other chukka needs two).
-export function plannedFastCount(valid, numChukkas) {
-  const highSlots = valid.filter((p) => hcap(p) >= 1).reduce((s, p) => s + wantedOf(p), 0);
-  const positiveSlots = valid.filter(isPositive).reduce((s, p) => s + wantedOf(p), 0);
-  const mostWantedByNeverFast = valid.filter(neverFast).reduce((m, p) => Math.max(m, wantedOf(p)), 0);
-  return Math.max(
-    0,
-    Math.min(
-      Math.floor(highSlots / CAPACITY),
-      Math.floor(numChukkas / 2),
-      numChukkas - mostWantedByNeverFast,
-      Math.floor((positiveSlots - MIN_POSITIVES * numChukkas) / (6 - MIN_POSITIVES))
-    )
-  );
-}
-
 // Top chukkas: a block of chukkas aimed at the day's top players, so the
 // better players get a fast game too. A nice-to-have, not a rule: anyone can
 // fill in when that suits the day better (except -1.5s and -2s, who stay out
@@ -207,14 +186,12 @@ function placeInPairs(labels, count, label, preferredStarts) {
 // end, or spread through it in pairs ('mixed').
 export const BEGINNER_PLACEMENTS = ['start', 'mixed', 'end'];
 
-// Plan each chukka as 'top' (the top group's chukkas), 'slow', 'neutral'
-// (medium — whatever it turns out to be) or, on the Fast board only, 'fast'.
-// Top chukkas are a block at the opposite end of the day from the beginners
-// (at the end, unless beginners are at the end). Slow chukkas are sized to the
-// day's slow demand and placed as one block at the start or end, or spread in
-// pairs. Fast chukkas then go in pairs with a gap (1-2, 4-5, ...) from the
-// first free chukka; top chukkas count toward the Fast board's fast ones.
-export function buildPaceLabels(valid, numChukkas, totalRequested, mode, placement = 'end', topRequested = 0) {
+// Plan each chukka as 'top' (aimed at the top group), 'slow', or 'neutral'
+// (medium — whatever it turns out to be). Top chukkas are a block at the
+// opposite end of the day from the beginners (at the end, unless beginners are
+// at the end). Slow chukkas are sized to the day's slow demand and placed as
+// one block at the start or end, or spread in pairs.
+export function buildPaceLabels(valid, numChukkas, totalRequested, placement = 'end', topRequested = 0) {
   const labels = new Array(numChukkas).fill('neutral');
   const topCount = plannedTopCount(valid, numChukkas, topRequested);
   if (placement === 'end') {
@@ -224,13 +201,12 @@ export function buildPaceLabels(valid, numChukkas, totalRequested, mode, placeme
     const lastFull = totalRequested % CAPACITY === 0 ? numChukkas : numChukkas - 1;
     for (let i = Math.max(0, lastFull - topCount); i < lastFull; i++) labels[i] = 'top';
   }
-  const fastCount = mode === 'fast' ? Math.max(0, plannedFastCount(valid, numChukkas) - topCount) : 0;
   // A slow chukka holds about four beginners (plus helpers on each side), but
   // a full eight of everyone else who asked for slow.
   const beginnerSlow = valid.filter(isBeginner).reduce((s, p) => s + slowNeedOf(p), 0);
   const otherSlow = valid.filter((p) => !isBeginner(p)).reduce((s, p) => s + slowNeedOf(p), 0);
   const targetSlow = totalRequested > 0 ? Math.round(beginnerSlow / TEAM_SIZE + otherSlow / CAPACITY) : 0;
-  const slowCount = Math.min(targetSlow, numChukkas - fastCount - topCount);
+  const slowCount = Math.min(targetSlow, numChukkas - topCount);
   if (placement === 'start' || placement === 'end') {
     // One block, from that end of the day inward.
     let placed = 0;
@@ -244,12 +220,6 @@ export function buildPaceLabels(valid, numChukkas, totalRequested, mode, placeme
   } else {
     const pairCount = Math.ceil(slowCount / 2);
     placeInPairs(labels, slowCount, 'slow', pairCount > 0 ? evenIndices(pairCount, Math.max(1, numChukkas - 1)) : []);
-  }
-  if (fastCount > 0) {
-    const firstFree = Math.max(0, labels.indexOf('neutral'));
-    const starts = [];
-    for (let s = firstFree; s < numChukkas; s += 3) starts.push(s);
-    placeInPairs(labels, fastCount, 'fast', starts);
   }
   return labels;
 }
@@ -269,13 +239,11 @@ const FILL_JITTER = 20;
 // It's worth more than one chukka of deficit, so it does bend the pour-fill a
 // little; MUST_PLAY stops that from ever leaving someone short.
 const PAIR_BONUS = 1500;
-// Anyone who needs every remaining chukka they're allowed in (non-fast ones
-// for -1.5s and -2s, non-slow ones for helpers) gets in, whatever else their score says — getting
+// Anyone who needs every remaining chukka they're allowed in (no top ones for
+// -1.5s and -2s, only some slow ones for helpers) gets in, whatever else their score says — getting
 // everyone their chukkas outranks the helper and never-fast rules, which the
 // repair pass and colour split then do their best to protect.
 const MUST_PLAY = 200000;
-// On the Fast board, pull per goal of handicap into a fast chukka.
-const FAST_PULL = 300;
 // Top chukkas are a nudge, not a rule: a pull for a top-group player into a
 // top chukka (half once they've had one, so all of the group get a turn), a
 // lighter push for anyone else, and a gentle nudge for group members to save
@@ -319,9 +287,9 @@ function canFinishCleanly(deficits, chukkasLeft, capacity) {
 // and so on. Whoever has the most chukkas left gets first claim on a spot, so
 // only the tail can end up short. Early/late preference is a strong but soft
 // nudge (see timingWindow). Slow chukkas lean toward lower-handicap players
-// and pull beginners together; fast chukkas (Fast board) pull high-goal
-// players and shut out -1.5s and -2s; medium chukkas steer -1.5s, -2s and
-// slow-requesters away once they're shaping up to be fast.
+// and pull beginners together; top chukkas pull the top group and shut out
+// -1.5s and -2s; medium chukkas steer -1.5s, -2s and slow-requesters away once
+// they're shaping up to be fast.
 // `relaxed` is the fallback used only when no normal attempt gets everyone
 // their chukkas: the helper caps and the beginner-block rules turn into soft
 // nudges (getting everyone their chukkas outranks them).
@@ -350,7 +318,6 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
     for (let i = numChukkas - 1; i >= 0; i--) from[i] = from[i + 1] + (paceLabels[i] === label ? 1 : 0);
     return from;
   };
-  const fastFrom = labelFrom('fast');
   const topFrom = labelFrom('top');
   const slowFrom = labelFrom('slow');
   // Top-group players save chukkas for the top block: enough between them to
@@ -382,18 +349,16 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
         if (deficit <= 0) return;
         const h = hcap(p);
         const remainingChukkas = numChukkas - c.index;
-        // Chukkas left that they can count on: -1.5s and -2s never get fast or
-        // top ones, anyone outside the top group never gets top ones, and slow
-        // chukkas only take two helpers, so a helper only counts on some of
-        // them (1 in HELPER_SLOW_SHARE_DIVISOR).
+        // Chukkas left that they can count on: -1.5s and -2s never get top
+        // ones, and slow chukkas only take two helpers, so a helper only counts
+        // on some of them (1 in HELPER_SLOW_SHARE_DIVISOR).
         let allowedLeft = remainingChukkas;
-        if (neverFast(p)) allowedLeft -= fastFrom[c.index];
         if (neverFast(p)) allowedLeft -= topFrom[c.index];
         if (countsAsHelper(p)) allowedLeft -= Math.floor(slowFrom[c.index] / HELPER_SLOW_SHARE_DIVISOR);
         let score = deficit * 1000;
-        // (Only in a chukka they're counted as allowed in — a fast or top
-        // chukka for a -1.5 or -2 isn't one of the chukkas they need every one of.)
-        const excludedHere = (c.pace === 'top' || c.pace === 'fast') && neverFast(p);
+        // (Only in a chukka they're counted as allowed in — a top chukka for a
+        // -1.5 or -2 isn't one of the chukkas they need every one of.)
+        const excludedHere = c.pace === 'top' && neverFast(p);
         if (deficit >= allowedLeft && !excludedHere) score += MUST_PLAY;
 
         if (p.timingPref === 'early') {
@@ -447,10 +412,6 @@ export function fillChukkas(valid, numChukkas, capacity, paceLabels, jitter, rel
           score -= relaxed ? 0 : BEGINNER_OFF_BLOCK; // only slow chukkas left to give them
         } else if (isBeginner(p) && c.pace === 'neutral' && Math.max(0, slowDistance[c.index] - 2) > 0) {
           score -= (slowDistance[c.index] - 2) * BEGINNER_LEAD_IN;
-        } else if (c.pace === 'fast') {
-          if (neverFast(p)) score -= 100000;
-          score += h * FAST_PULL;
-          if (n.none === 0) score -= 2000; // all they have left to give is slow chukkas
         } else if (isBeginner(p) && beginnersIn >= 2) {
           // More than two beginners turns a medium chukka slow — beginners'
           // medium chukkas should actually play medium.
@@ -618,7 +579,7 @@ const isClean = (key) => key.every((k) => k <= 1e-9);
 // every chukka's size, so the pour-fill and the requested totals are
 // untouched. A swap is never taken if it adds an early/late miss for either
 // player, takes a slow-labelled chukka away from someone who still needs one,
-// or puts a -1.5 or -2 into a fast-labelled chukka. Every accepted swap
+// or puts a -1.5 or -2 into a top chukka. Every accepted swap
 // strictly improves the day's total balance key, so this can't loop.
 export function repairChukkas(chukkas, valid, numChukkas, actualPace) {
   const win = timingWindow(numChukkas);
@@ -653,11 +614,9 @@ export function repairChukkas(chukkas, valid, numChukkas, actualPace) {
       const slowDelta = (Y.pace === 'slow' ? 1 : 0) - (X.pace === 'slow' ? 1 : 0); // for whoever moves X → Y
       X.players.forEach((a, ai) => {
         if (yIds.has(a.id)) return;
-        if (Y.pace === 'fast' && neverFast(a)) return;
         if (Y.pace === 'top' && neverFast(a)) return;
         Y.players.forEach((b, bi) => {
           if (xIds.has(b.id)) return;
-          if (X.pace === 'fast' && neverFast(b)) return;
           if (X.pace === 'top' && neverFast(b)) return;
           const missesBefore = (outOfTimingWindow(a, X.index, win) ? 1 : 0) + (outOfTimingWindow(b, Y.index, win) ? 1 : 0);
           const missesAfter = (outOfTimingWindow(a, Y.index, win) ? 1 : 0) + (outOfTimingWindow(b, X.index, win) ? 1 : 0);
@@ -880,11 +839,10 @@ export function displayPaceOf(roster) {
 
 const teamTotal = (side) => side.reduce((s, p) => s + hcap(p), 0);
 
-// Build one board. `mode` is 'standard' or 'fast' (the Fast board plans
-// fast chukkas for the high-goal players); `beginnerPlacement` is one of
-// BEGINNER_PLACEMENTS. Returns { error } when there's nothing to schedule,
-// otherwise { board, warnings }.
-export function generateBoard(players, mode = 'standard', { beginnerPlacement = 'end', topChukkas = 2 } = {}) {
+// Build the board. `beginnerPlacement` is one of BEGINNER_PLACEMENTS;
+// `topChukkas` is how many top chukkas to aim for (0–4). Returns { error } when
+// there's nothing to schedule, otherwise { board, warnings }.
+export function generateBoard(players, { beginnerPlacement = 'end', topChukkas = 2 } = {}) {
   const valid = players.filter((p) => p.name.trim() !== '');
   if (valid.length < 2) return { error: 'Add at least two named players before generating a board.' };
   const totalRequested = valid.reduce((s, p) => s + wantedOf(p), 0);
@@ -893,14 +851,13 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
   }
 
   const numChukkas = Math.ceil(totalRequested / CAPACITY);
-  const paceLabels = buildPaceLabels(valid, numChukkas, totalRequested, mode, beginnerPlacement, topChukkas);
-  const plannedFast = paceLabels.filter((l) => l === 'fast').length;
+  const paceLabels = buildPaceLabels(valid, numChukkas, totalRequested, beginnerPlacement, topChukkas);
   const plannedTop = paceLabels.filter((l) => l === 'top').length;
   const topIds = plannedTop > 0 ? topGroup(valid) : new Set();
 
   // Try several randomised passes and keep whichever scores best: everyone
   // gets their chukkas, then handicap gaps, then -1.5s/-2s kept out of fast
-  // chukkas, then timing preferences, shirt changes, planned fast chukkas,
+  // chukkas, then timing preferences, shirt changes, top chukkas,
   // slow requests, and finally overall balance.
   let best = null;
   for (let attempt = 0; attempt < ATTEMPTS * 2; attempt++) {
@@ -920,7 +877,6 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
       return s + Math.max(0, slowRequested - nonFastCount);
     }, 0);
     const tooFast = chukkas.reduce((s, c) => s + (c.displayPace === 'fast' ? c.players.filter(neverFast).length : 0), 0);
-    const fastMiss = chukkas.filter((c) => c.pace === 'fast' && c.displayPace !== 'fast').length;
     // Players in a top chukka from outside the top group.
     const topMiss = chukkas.reduce((s, c) => s + (c.pace === 'top' ? c.players.filter((p) => !topIds.has(p.id)).length : 0), 0);
     const capBreaches = Object.values(history).reduce((s, h) => s + Math.max(0, h.changes - 3), 0);
@@ -945,7 +901,6 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
       tooFast * 2000 +
       violations.length * 1500 +
       capBreaches * 1000 +
-      fastMiss * 500 +
       topMiss * 500 +
       paceMismatch * 200 +
       totalChanges * 50 +
@@ -1007,9 +962,6 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
         warn.push(`${p.name} (${p.handicap}) is in fast Chukka ${c.index + 1} — couldn't keep them out given who's playing.`);
       });
     }
-    if (c.pace === 'fast' && c.displayPace !== 'fast') {
-      warn.push(`Chukka ${c.index + 1} was planned fast but came out ${c.displayPace === 'slow' ? 'slow' : 'medium'}.`);
-    }
   });
   best.violations.forEach((v) => {
     warn.push(`${v.name} played Chukka ${v.chukka} outside their ${v.pref} preference — kept the handicap balance intact instead.`);
@@ -1023,7 +975,7 @@ export function generateBoard(players, mode = 'standard', { beginnerPlacement = 
 
   const displayValid = [...valid].sort((a, b) => hcap(b) - hcap(a));
   return {
-    board: { ...best, mode, plannedFast, plannedTop, numChukkas, capacity: CAPACITY, teamSize: TEAM_SIZE, valid: displayValid },
+    board: { ...best, plannedTop, numChukkas, capacity: CAPACITY, teamSize: TEAM_SIZE, valid: displayValid },
     warnings: warn,
   };
 }

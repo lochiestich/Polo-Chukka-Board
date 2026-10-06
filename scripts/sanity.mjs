@@ -1,5 +1,5 @@
-// Runs the scheduler over the club's real rosters (scripts/rosters.mjs) in
-// both modes, prints a quality table, and exits non-zero if a structural rule
+// Runs the scheduler over the club's real rosters (scripts/rosters.mjs) with
+// each beginner placement, prints a quality table, and exits non-zero if a structural rule
 // is broken. Usage: npm run sanity [-- runs]
 import { isBeginner, neverFast, countsAsHelper, topGroup, CAPACITY } from '../src/scheduler.js';
 import { ROSTERS } from './rosters.mjs';
@@ -7,7 +7,6 @@ import { ROSTERS } from './rosters.mjs';
 const RUNS = Number(process.argv[2] || 5);
 // SCHEDULER=path lets you measure another version of the scheduler (e.g. an old one) against the same rules.
 const { generateBoard } = await import(process.env.SCHEDULER ? new URL(process.env.SCHEDULER, `file://${process.cwd()}/`).href : '../src/scheduler.js');
-const MODES = (process.env.MODES || 'standard,fast').split(',');
 const PLACEMENTS = (process.env.PLACEMENTS || 'end,start,mixed').split(',');
 const h = (p) => Number(p.handicap) || 0;
 const sum = (side) => side.reduce((s, p) => s + h(p), 0);
@@ -71,16 +70,16 @@ function measure(name, board) {
 }
 
 const cols = ['top8', 'reach', 'unmet', 'gap', 'noPos', 'floor', 'side', 'tooFast', 'timing', 'fast', 'pairs%', 'block%', 'begRun%', 'begPos', 'shirts', 'ms'];
-console.log('roster'.padEnd(24) + 'mode'.padEnd(9) + 'beg'.padEnd(7) + cols.map((c) => c.padStart(8)).join(''));
+console.log('roster'.padEnd(24) + 'beg'.padEnd(7) + cols.map((c) => c.padStart(8)).join(''));
 for (const [rname, roster] of Object.entries(ROSTERS)) {
-  for (const placement of PLACEMENTS) for (const mode of MODES) {
+  for (const placement of PLACEMENTS) {
     const tot = { top8: 0, topReach: 0, unmet: 0, gap: 0, noPos: 0, floor: 0, side: 0, tooFast: 0, timing: 0, fast: 0, pairs: 0, slots: 0, begBlock: 0, begRun: 0, begPos: 0, begSlots: 0, shirts: 0, ms: 0 };
     for (let r = 0; r < RUNS; r++) {
       const t0 = performance.now();
-      const { board, error } = generateBoard(roster, mode, { beginnerPlacement: placement, topChukkas: Number(process.env.TOP ?? 2) });
+      const { board, error } = generateBoard(roster, { beginnerPlacement: placement, topChukkas: Number(process.env.TOP ?? 2) });
       tot.ms += performance.now() - t0;
       if (error) { failures.push(`${rname}: ${error}`); continue; }
-      const m = measure(`${rname} [${mode}/${placement}]`, board);
+      const m = measure(`${rname} [${placement}]`, board);
       for (const k of Object.keys(m)) tot[k] += m[k];
     }
     const avg = (k) => (tot[k] / RUNS).toFixed(1);
@@ -90,7 +89,7 @@ for (const [rname, roster] of Object.entries(ROSTERS)) {
       tot.begSlots ? ((100 * tot.begRun) / tot.begSlots).toFixed(0) : '-',
       tot.begSlots ? (tot.begPos / tot.begSlots).toFixed(2) : '-',
       avg('shirts'), avg('ms')];
-    console.log(rname.padEnd(24) + mode.padEnd(9) + placement.padEnd(7) + row.map((c) => String(c).padStart(8)).join(''));
+    console.log(rname.padEnd(24) + placement.padEnd(7) + row.map((c) => String(c).padStart(8)).join(''));
   }
 }
 console.log('\nPer-board averages over', RUNS, 'runs. top8 = chukkas of 8 top-group (top 12) players; reach = how many of the top group got one; noPos = sides with nobody above 0; floor = goals below -5.5 a side; gap/side = rule excess; tooFast = -1.5/-2 slots in fast chukkas;');
