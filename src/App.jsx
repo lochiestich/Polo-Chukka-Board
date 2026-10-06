@@ -85,6 +85,7 @@ const TOP_OPTIONS = [
   { value: 1, label: '1' },
   { value: 2, label: '2' },
   { value: 3, label: '3' },
+  { value: 4, label: '4' },
 ];
 
 function loadStoredTop() {
@@ -302,21 +303,14 @@ const PLACEMENT_OPTIONS = [
   { value: 'end', label: 'End' },
 ];
 
-const VIEW_OPTIONS = [
-  { value: 'standard', label: 'Standard' },
-  { value: 'fast', label: 'Fast' },
-];
-
 // How each chukka's pace is shown, F/M/S like the club's hand-made boards.
 const PACE_LETTER = { fast: 'F', neutral: 'M', slow: 'S' };
 const PACE_NAME = { fast: 'Fast', neutral: 'Medium', slow: 'Slow' };
 
 export default function ChukkaBoardApp() {
   const [players, setPlayers] = useState(() => loadStoredPlayers() || SAMPLE);
-  // Generate builds both boards at once; the Standard | Fast switch picks which one is shown and shared.
-  const [boards, setBoards] = useState(null);
+  const [result, setResult] = useState(null);
   const [error, setError] = useState('');
-  const [view, setView] = useState('standard');
   const [placement, setPlacement] = useState(loadStoredPlacement);
   const [topChukkas, setTopChukkas] = useState(loadStoredTop);
   const [openDropdownId, setOpenDropdownId] = useState(null);
@@ -345,7 +339,7 @@ export default function ChukkaBoardApp() {
   const addPlayer = () => setPlayers((ps) => [...ps, makePlayer('', 0, 3)]);
   const removePlayer = (id) => setPlayers((ps) => ps.filter((p) => p.id !== id));
   const resetBoards = () => {
-    setBoards(null);
+    setResult(null);
     setError('');
   };
   const clearAll = () => {
@@ -377,22 +371,18 @@ export default function ChukkaBoardApp() {
   const computedChukkas = totalRequestedNow > 0 ? Math.ceil(totalRequestedNow / CAPACITY) : 0;
 
   function generate() {
-    const options = { beginnerPlacement: placement, topChukkas };
-    const standard = generateBoard(players, 'standard', options);
-    if (standard.error) {
-      setBoards(null);
-      setError(standard.error);
+    const generated = generateBoard(players, { beginnerPlacement: placement, topChukkas });
+    if (generated.error) {
+      setResult(null);
+      setError(generated.error);
       return;
     }
     setError('');
-    setBoards({ standard, fast: generateBoard(players, 'fast', options) });
+    setResult(generated);
   }
 
-  const fastAvailable = boards ? boards.fast.board.plannedFast > 0 : false;
-  const activeView = fastAvailable ? view : 'standard';
-  const shown = boards ? boards[activeView] : null;
-  const board = shown ? shown.board : null;
-  const warnings = error ? [error] : shown ? shown.warnings : [];
+  const board = result ? result.board : null;
+  const warnings = error ? [error] : result ? result.warnings : [];
 
   async function shareBoard() {
     if (!board || !boardRef.current) return;
@@ -452,7 +442,7 @@ export default function ChukkaBoardApp() {
           <p className="text-emerald-300 mt-2 text-sm max-w-2xl">
             Enter your players, handicaps, and how many chukkas each wants — plus how many of
             those should be slow, and whether they need to play early or late. Everything else is
-            worked out for you, with a Standard board and a Fast board to choose between.
+            worked out for you, including top chukkas so the day's best players get a fast game too.
           </p>
         </header>
 
@@ -608,7 +598,6 @@ export default function ChukkaBoardApp() {
             <section className="mb-10">
               <div className="flex flex-wrap items-center gap-3 mb-3">
                 <h2 className="font-serif text-2xl text-stone-50 mr-auto">Final Board</h2>
-                {fastAvailable && <Segmented value={activeView} onChange={setView} options={VIEW_OPTIONS} />}
                 <button
                   onClick={shareBoard}
                   className="flex items-center gap-2 bg-emerald-800 hover:bg-emerald-700 text-emerald-50 text-sm px-3 py-1.5 rounded-md"
@@ -616,20 +605,10 @@ export default function ChukkaBoardApp() {
                   Share Board
                 </button>
               </div>
-              {!fastAvailable && (
-                <p className="text-xs text-emerald-400 mb-3">
-                  No Fast board today — not enough 1-goal-and-up players to make up a fast chukka.
-                </p>
-              )}
               {board.plannedTop > 0 && (
                 <p className="text-xs text-emerald-400 mb-3">
                   ★ {board.plannedTop === 1 ? 'Top chukka' : `${board.plannedTop} top chukkas`}: aimed at the day's top 12 players, so
                   they get a fast game too — others fill in where that suits the day better.
-                </p>
-              )}
-              {activeView === 'fast' && (
-                <p className="text-xs text-emerald-400 mb-3">
-                  Fast board: {board.plannedFast} chukka{board.plannedFast === 1 ? '' : 's'} planned fast for the higher-goal players.
                 </p>
               )}
               {shareStatus && <p className="text-xs text-amber-400 mb-3">{shareStatus}</p>}

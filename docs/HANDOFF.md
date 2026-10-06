@@ -14,7 +14,7 @@ standalone HTML file on GitHub Pages / installed to an Android home screen as a 
 - **`src/App.jsx`** — the UI (was `chukka-board.jsx` in the original handoff), plus
   the sample roster and `MASTER_HANDICAPS`. React, `lucide-react` icons, Tailwind.
 - **`scripts/rosters.mjs` / `scripts/sanity.mjs`** — real rosters from the club's
-  hand-made boards, and `npm run sanity`, which runs them through both boards,
+  hand-made boards, and `npm run sanity`, which runs them with each beginner placement,
   prints a quality table and fails on structural breaks. CI runs it before deploy.
 - **`legacy/chukka-board-app.html`** — the old hand-compiled standalone build, kept
   for reference only. Nothing serves it.
@@ -41,9 +41,10 @@ to `main`; Pages must be set to **Source: GitHub Actions** in the repo settings.
 ```
 
 There used to be a mirrored `fastChukkas` field. It was removed on purpose — no
-player requests "fast" directly. Fast is either the **emergent display label** (see
-Display pace below) or, on the **Fast board**, a whole-board mode that plans fast
-chukkas for the higher-goal players.
+player requests "fast" directly. Fast is the **emergent display label** (see
+Display pace below); the day's best players get their fast game from the **top
+chukkas**. (There was briefly a separate "Fast board" with a Standard | Fast
+switch; it was removed in October 2026 once top chukkas covered the same need.)
 
 ## Club rules (agreed October 2026, from the club's own boards)
 
@@ -80,7 +81,7 @@ at 0.85 of the way through the day (the club's board: chukkas 10–13 of 13), an
   spare (`ANCHOR_PULL`, a soft pull for 1.5+ helpers into beginner and slow
   chukkas while they still need their two helpers). Beginner sides with a 1.5+
   anchor went from 54% to 66% on the club rosters.
-- **Top chukkas** (Top chukkas: Off / 1 / 2 / 3 setting, default 2): a block of
+- **Top chukkas** (Top chukkas: Off / 1 / 2 / 3 / 4 setting, default 2): a block of
   chukkas aimed at the day's top group — the top 12 by handicap, ties with the
   12th included, never -1.5s or -2s — so the better players get a fast game too.
   From the club's Sun 9.30 board, where chukkas 14–16 were all top players.
@@ -97,9 +98,8 @@ at 0.85 of the way through the day (the club's board: chukkas 10–13 of 13), an
   prefers picks that leave the group able to fill the top chukkas to come.
 - **Someone above 0 on every side, in every chukka**, and **no side below -5.5**
   (`SIDE_FLOOR`; no "-6 goal" teams). Both rank straight after the gap cap. The
-  fill makes sure each chukka gets two above-0 players; the Fast board never plans
-  so many fast chukkas that the others would run short of them. A leftover tail
-  chukka of under four players is exempt.
+  fill makes sure each chukka gets two above-0 players. A leftover tail chukka of
+  under four players is exempt.
 - **Improvers (-1.5)**: at least half their chukkas slow (`IMPROVER_SLOW_SHARE`,
   or more if they ask), never in a fast chukka.
 - **One helper per beginner side, in every chukka**: a "helper" is a player above
@@ -148,15 +148,14 @@ a normal one-off player with a manually-set handicap.
   3. **Back-to-back pairs** — `PAIR_BONUS` (1500) for staying on for a second
      chukka in a row. It's worth more than one chukka of deficit, so it bends the
      pour slightly.
-  4. **Pace labels** from `buildPaceLabels()`: `'slow'`, `'neutral'` (medium) and,
-     on the Fast board only, `'fast'`. Slow chukkas are sized as beginners' slow
-     demand ÷ 4 plus everyone else's ÷ 8, and placed evenly in pairs. Fast chukkas
-     (`plannedFastCount()`: one per 8 chukka-slots wanted by 1-goal-and-up players,
-     max half the day, and always leaving every -1.5/-2 enough non-fast chukkas)
-     go at the start of the day in pairs: 1-2, 4-5, …
+  4. **Pace labels** from `buildPaceLabels()`: `'top'`, `'slow'` and `'neutral'`
+     (medium). Slow chukkas are sized as beginners' slow demand ÷ 4 plus everyone
+     else's ÷ 8, and placed as a block (start/end) or evenly in pairs (mixed).
+     Top chukkas are a block at the other end of the day (see Club rules).
      - slow chukka: bonus for slow-needers and lower handicaps; beginners pulled
        together.
-     - fast chukka: −100000 for -1.5/-2; `FAST_PULL` (300) per goal of handicap.
+     - top chukka: `TOP_PULL` for the top group, a light `TOP_OUTSIDER` nudge for
+       everyone else, −100000 for -1.5/-2.
      - medium chukka: at most two beginners (−1500); once it's trending fast
        (average over 0.5), slow-requesters lightly and -1.5/-2s strongly steered
        away.
@@ -249,28 +248,16 @@ colours, and the lowest weighted score wins:
 
 ```
 unmet×100000 + gapBreaches×3000 + sideBreaches×3000 + tooFast×2000 + violations.length×1500
-  + capBreaches×1000 + fastMiss×500 + topMiss×500 + paceMismatch×200 + totalChanges×50 + totalDiff×10
+  + capBreaches×1000 + topMiss×500 + paceMismatch×200 + totalChanges×50 + totalDiff×10
 ```
 
 (`sideBreaches` = sides with nobody above 0 plus goals below -5.5;
 `gapBreaches`/`capBreaches` mirror the per-chukka diff-cap/shirt-cap checks across
 the whole day; `tooFast` = -1.5/-2 player-slots in chukkas that play fast;
-`violations` = timing-preference misses, recomputed after repair; `fastMiss` =
-planned-fast chukkas that didn't play fast (Fast board only); `topMiss` =
+`violations` = timing-preference misses, recomputed after repair; `topMiss` =
 players in a top chukka from outside the top group (lightly weighted — it's a
 nice-to-have); `unmet` = requested
 chukkas that couldn't be placed anywhere.)
-
-### Two boards: Standard and Fast
-
-Generate runs the whole pipeline twice, `generateBoard(players, 'standard')` and
-`generateBoard(players, 'fast')`. The only difference is that the Fast board plans
-fast-labelled chukkas. A Standard | Fast switch above the Final Board picks
-which one is shown, warned about and shared. If `plannedFastCount()` is 0 there's
-no Fast board that day and the switch is hidden. On the club's big rosters the
-Standard board already starts the day with the high-goal players together, so the
-Fast board mostly makes that deliberate (fast pairs at 1-2, 4-5); it should differ
-more on days where the strong players would otherwise be spread out.
 
 ## Display pace (cosmetic only)
 
@@ -280,9 +267,9 @@ cut-offs read off its boards: **fast at 3.5 and up** (about +1 a player),
 **slow at -2 and down** (about -0.5 a player), medium in between
 (`FAST_TEAM_TOTAL`, `SLOW_TEAM_TOTAL`). The fill's "this medium chukka is
 turning fast" check uses the same fast line. Shown as **F / M / S** above each chukka number like the club's sheets. It feeds
-the outer score (`tooFast`, `fastMiss`, `paceMismatch`) but not the fill. Don't
-confuse it with the internal `pace` field from `buildPaceLabels()` — the plan,
-which can say `'fast'` only on the Fast board.
+the outer score (`tooFast`, `paceMismatch`) but not the fill. Don't confuse it
+with the internal `pace` field from `buildPaceLabels()` — the plan (`'top'`,
+`'slow'`, `'neutral'`).
 
 ## ⚠️ Hard lessons (read before touching the priority order)
 
@@ -313,7 +300,7 @@ of nesting.
   breakpoint up it's the original 12-column grid.
 - **`localStorage` persistence** of the roster (not the generated board) between
   visits, wrapped in try/catch, degrades gracefully if storage is unavailable.
-- **Final Board**: Standard | Fast switch, then a grid table, players (sorted by handicap, highest first) down the
+- **Final Board**: a grid table, players (sorted by handicap, highest first) down the
   side, chukkas across the top, blue/white cells, plus Handicap B / Handicap W /
   Difference summary rows at the bottom, with visible gridlines.
 - **Per-chukka cards**: Blue/White rosters with handicap totals, each sorted
@@ -332,8 +319,8 @@ of nesting.
 - Players per team hard-coded at 4 (8 per chukka). There was a stepper for this;
   removed on request after an earlier auto-search approach picked silly small
   formats trying to minimise unfilled slots.
-- Only "slow" is requestable per-player. "Fast" is the display label, or the
-  whole-board Fast mode — never a per-player request.
+- Only "slow" is requestable per-player. "Fast" is the display label — never a
+  per-player request; top chukkas give the best players their fast game.
 - **No cap on how many players can request early/late** — explicitly, deliberately
   unbounded, because these reflect real personal commitments, not a parameter to
   arbitrarily limit. If multiple same-preference requests ever cause a problem
