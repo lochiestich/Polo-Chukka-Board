@@ -115,13 +115,22 @@ at 0.85 of the way through the day (the club's board: chukkas 10–13 of 13), an
 
 ## Master handicap list
 
-`MASTER_HANDICAPS` is a baked-in array of ~109 `{name, handicap}` entries from the
-KPA (Kenya Polo Association) handicap list, sourced from a club PDF. A second
-"yellow" block further down that sheet was a separate list and was deliberately
-excluded. Names are stored as "Firstname + initial" (e.g. `Harry S`). This powers a
-type-ahead on the Name field: typing shows matches from the list, selecting one
-fills in the handicap automatically; typing something that doesn't match just adds
-a normal one-off player with a manually-set handicap.
+`MASTER_HANDICAPS` in `App.jsx` is a baked-in array of 107 `{name, handicap}`
+entries from the **K.P.A. Handicap List — October 2026** (`HANDICAP_LIST_VERSION`
+`'kpa-2026-10'`), using the **Kenya H'Cap** column: that's the adjusted handicap
+the club's boards use (International is the other column; Ladies and the * / **
+/ Plus / Minus markers are ignored). Only the main list is included; the second,
+unmarked block lower down the sheet (McCorkell George onwards) is a separate list
+and was deliberately excluded, as with the July 2026 list before it. Names are
+stored as "Firstname + surname initial" (e.g. `Harry S`, `Lekeshon O` for "Ole
+Butu Lekeshon"). This powers a type-ahead on the Name field: typing shows matches
+from the list, selecting one fills in the handicap automatically; typing something
+that doesn't match just adds a normal one-off player with a manually-set handicap.
+
+**When the list is updated**: bump `HANDICAP_LIST_VERSION`. On the next visit,
+players already saved in someone's roster whose name exactly matches a list entry
+get the new handicap, once, with a note listing the changes (`loadInitialRoster()`).
+Names typed some other way are left alone.
 
 ## Scheduling: a two-stage pipeline, run 15×, best attempt kept
 
