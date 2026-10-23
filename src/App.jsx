@@ -114,6 +114,41 @@ function saveStoredPlacement(v) {
   }
 }
 
+// When a new handicap list ships, players already saved in the roster whose
+// name exactly matches a list entry (e.g. "Cheza M") get the new handicap —
+// once per list, with a note saying what changed. Names typed some other way
+// (e.g. "Cheza") are left alone.
+const LIST_VERSION_KEY = 'chukka-board-handicap-list-v1';
+
+function loadInitialRoster() {
+  const stored = loadStoredPlayers();
+  if (!stored) return { players: SAMPLE, handicapChanges: [] };
+  let seen = null;
+  try {
+    seen = window.localStorage.getItem(LIST_VERSION_KEY);
+  } catch (e) {
+    // storage unavailable — treat the list as unseen
+  }
+  if (seen === HANDICAP_LIST_VERSION) return { players: stored, handicapChanges: [] };
+  const byName = new Map(MASTER_HANDICAPS.map((m) => [m.name.toLowerCase(), m.handicap]));
+  const handicapChanges = [];
+  const players = stored.map((p) => {
+    const listed = byName.get(String(p.name).trim().toLowerCase());
+    if (listed === undefined || Number(p.handicap) === listed) return p;
+    handicapChanges.push({ name: p.name, from: p.handicap, to: listed });
+    return { ...p, handicap: listed };
+  });
+  return { players, handicapChanges };
+}
+
+function markHandicapListSeen() {
+  try {
+    window.localStorage.setItem(LIST_VERSION_KEY, HANDICAP_LIST_VERSION);
+  } catch (e) {
+    // storage unavailable — the note may show again next visit
+  }
+}
+
 function saveStoredPlayers(players) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(players));
@@ -122,17 +157,19 @@ function saveStoredPlayers(players) {
   }
 }
 
-// K.P.A. Handicap List — July 2026, Kenya handicap column only (the second
-// yellow block lower down the sheet was a separate list and isn't included).
+// K.P.A. Handicap List — October 2026: the Kenya (adjusted) H'Cap column, which
+// is what the club's boards use. Main list only — the second, unmarked block
+// lower down the sheet is a separate list and isn't included. Names are
+// "Firstname + surname initial", as on the boards.
+const HANDICAP_LIST_VERSION = 'kpa-2026-10';
 const MASTER_HANDICAPS = [
   { name: 'Casimir G', handicap: 6 },
-  { name: 'James M', handicap: 4 },
   { name: 'Craig M', handicap: 4 },
+  { name: 'James M', handicap: 4 },
   { name: 'Archie V', handicap: 4 },
   { name: 'Hansi B', handicap: 3 },
   { name: 'Joss C', handicap: 3 },
   { name: 'Tarquin G', handicap: 3 },
-  { name: 'George M', handicap: 3 },
   { name: 'Callum S', handicap: 3 },
   { name: 'Izzy V', handicap: 3 },
   { name: 'Harry G', handicap: 2.5 },
@@ -140,66 +177,65 @@ const MASTER_HANDICAPS = [
   { name: 'William M', handicap: 2.5 },
   { name: 'Jadini N', handicap: 2.5 },
   { name: 'Harry S', handicap: 2.5 },
-  { name: 'Kimoi M', handicap: 2 },
   { name: 'Julian C', handicap: 2 },
+  { name: 'Kimoi M', handicap: 2 },
   { name: 'Geoffrey M', handicap: 2 },
   { name: 'Mbugua N', handicap: 2 },
   { name: 'Amani N', handicap: 2 },
   { name: 'Ben S', handicap: 2 },
   { name: 'Richard S', handicap: 2 },
-  { name: 'Vishal S', handicap: 1.5 },
-  { name: 'Phillip A', handicap: 1.5 },
   { name: 'Omwakwe A', handicap: 1.5 },
+  { name: 'Phillip A', handicap: 1.5 },
+  { name: 'Jamie E', handicap: 1.5 },
   { name: 'Megan G', handicap: 1.5 },
+  { name: 'Cheza M', handicap: 1.5 },
   { name: 'Gordy M', handicap: 1.5 },
   { name: 'Raphael N', handicap: 1.5 },
-  { name: 'Jamie E', handicap: 1.5 },
+  { name: 'Vishal S', handicap: 1.5 },
   { name: 'Aisha G', handicap: 1 },
   { name: 'Sacha G', handicap: 1 },
   { name: 'Gregory K', handicap: 1 },
-  { name: 'Cheza M', handicap: 1 },
   { name: 'Nicholas M', handicap: 1 },
-  { name: 'Gideon M', handicap: 1 },
   { name: 'John M', handicap: 1 },
+  { name: 'Lochlan M', handicap: 1 },
   { name: 'Hiromi N', handicap: 1 },
   { name: 'Izzy S', handicap: 1 },
   { name: 'Jonathan S', handicap: 1 },
+  { name: 'Lochie S', handicap: 1 },
   { name: 'Tom S', handicap: 1 },
   { name: 'Natasha T', handicap: 1 },
   { name: 'Moses W', handicap: 1 },
-  { name: 'Lochie S', handicap: 1 },
+  { name: 'Nicky B', handicap: 0.5 },
+  { name: 'Edward B', handicap: 0.5 },
+  { name: 'Archie C', handicap: 0.5 },
   { name: 'Jennie C', handicap: 0.5 },
   { name: 'Phyllipa G', handicap: 0.5 },
   { name: 'Alastair J', handicap: 0.5 },
   { name: 'Georgina M', handicap: 0.5 },
-  { name: 'Lochlan M', handicap: 0.5 },
+  { name: 'Gideon M', handicap: 0.5 },
   { name: 'Mike M', handicap: 0.5 },
-  { name: 'Nikki B', handicap: 0.5 },
   { name: 'Lekeshon O', handicap: 0.5 },
+  { name: 'Jeremy P', handicap: 0.5 },
   { name: 'Lemmuel S', handicap: 0.5 },
   { name: 'Miranda S', handicap: 0.5 },
-  { name: 'Edward B', handicap: 0.5 },
   { name: 'Georgy A', handicap: 0 },
-  { name: 'Fredd K', handicap: 0 },
-  { name: 'Louis d', handicap: 0 },
   { name: 'Peter G', handicap: 0 },
   { name: 'Magda J', handicap: 0 },
   { name: 'Joe K', handicap: 0 },
+  { name: 'Fredd K', handicap: 0 },
+  { name: 'Kevin K', handicap: 0 },
   { name: 'Isaac M', handicap: 0 },
+  { name: 'Tom M', handicap: 0 },
   { name: 'Kaila M', handicap: 0 },
   { name: 'Charlie M', handicap: 0 },
   { name: 'Simon M', handicap: 0 },
-  { name: 'Kevin K', handicap: 0 },
   { name: 'Tom A', handicap: -0.5 },
   { name: 'Beezie B', handicap: -0.5 },
   { name: 'Sacha C', handicap: -0.5 },
-  { name: 'Archie C', handicap: -0.5 },
   { name: 'Magali D', handicap: -0.5 },
   { name: 'Vincent D', handicap: -0.5 },
-  { name: 'Oskar d', handicap: -0.5 },
   { name: 'Sarah G', handicap: -0.5 },
   { name: 'Kelvin J', handicap: -0.5 },
-  { name: 'Tom M', handicap: -0.5 },
   { name: 'Vesper M', handicap: -0.5 },
   { name: 'Daisy O', handicap: -0.5 },
   { name: 'Josh S', handicap: -0.5 },
@@ -208,32 +244,32 @@ const MASTER_HANDICAPS = [
   { name: 'Alex T', handicap: -0.5 },
   { name: 'Piers W', handicap: -0.5 },
   { name: 'Ben Y', handicap: -0.5 },
+  { name: 'Billy C', handicap: -1 },
+  { name: 'Charlotte M', handicap: -1 },
   { name: 'Michelle M', handicap: -1 },
   { name: 'Ben M', handicap: -1 },
-  { name: 'Milly S', handicap: -1 },
-  { name: 'Charlotte M', handicap: -1 },
   { name: 'Alice O', handicap: -1 },
-  { name: 'Vincent D', handicap: -1 },
+  { name: 'Milly S', handicap: -1 },
+  { name: 'Archie S', handicap: -1 },
+  { name: 'Jamie S', handicap: -1 },
   { name: 'Karim A', handicap: -1.5 },
   { name: 'Sharon A', handicap: -1.5 },
-  { name: 'Billy C', handicap: -1.5 },
+  { name: 'Zack B', handicap: -1.5 },
+  { name: 'Angus B', handicap: -1.5 },
   { name: 'Anna D', handicap: -1.5 },
   { name: 'Eva K', handicap: -1.5 },
+  { name: 'Anton L', handicap: -1.5 },
+  { name: 'Hamish M', handicap: -1.5 },
+  { name: 'Oscar O', handicap: -1.5 },
   { name: 'Miranda R', handicap: -1.5 },
-  { name: 'Archie S', handicap: -1.5 },
-  { name: 'Jamie S', handicap: -1.5 },
+  { name: 'Charlie S', handicap: -1.5 },
   { name: 'Sam T', handicap: -1.5 },
+  { name: 'Charlie W', handicap: -1.5 },
   { name: 'Natalie Y', handicap: -1.5 },
-  { name: 'Angus B', handicap: -2 },
-  { name: 'Zak B', handicap: -2 },
   { name: 'Lena K', handicap: -2 },
-  { name: 'Anton L', handicap: -2 },
   { name: 'Alexandra M', handicap: -2 },
-  { name: 'Hamish M', handicap: -2 },
-  { name: 'Oscar O', handicap: -2 },
-  { name: 'Charlie S', handicap: -2 },
+  { name: 'Katie T', handicap: -2 },
   { name: 'Casper W', handicap: -2 },
-  { name: 'Charlie W', handicap: -2 },
 ];
 
 function Segmented({ value, onChange, options }) {
@@ -308,7 +344,9 @@ const PACE_LETTER = { fast: 'F', neutral: 'M', slow: 'S' };
 const PACE_NAME = { fast: 'Fast', neutral: 'Medium', slow: 'Slow' };
 
 export default function ChukkaBoardApp() {
-  const [players, setPlayers] = useState(() => loadStoredPlayers() || SAMPLE);
+  const [initialRoster] = useState(loadInitialRoster);
+  const [players, setPlayers] = useState(initialRoster.players);
+  const [handicapChanges, setHandicapChanges] = useState(initialRoster.handicapChanges);
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
   const [placement, setPlacement] = useState(loadStoredPlacement);
@@ -320,6 +358,10 @@ export default function ChukkaBoardApp() {
   useEffect(() => {
     saveStoredPlayers(players);
   }, [players]);
+
+  useEffect(() => {
+    markHandicapListSeen();
+  }, []);
 
   useEffect(() => {
     saveStoredPlacement(placement);
@@ -466,6 +508,20 @@ export default function ChukkaBoardApp() {
             Clear all
           </button>
         </section>
+
+        {handicapChanges.length > 0 && (
+          <div className="mb-4 bg-amber-950/60 border border-amber-700 rounded-lg p-3 text-sm text-amber-100">
+            <div className="flex items-start justify-between gap-3">
+              <p>
+                Handicaps updated to the October 2026 K.P.A. list:{' '}
+                {handicapChanges.map((c) => `${c.name} ${c.from} → ${c.to}`).join(', ')}.
+              </p>
+              <button onClick={() => setHandicapChanges([])} className="text-xs text-amber-300 hover:text-amber-100 underline shrink-0">
+                OK
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Roster */}
         <section className="mb-6">
